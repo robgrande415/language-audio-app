@@ -5,7 +5,8 @@ const API_BASE_URL = 'http://localhost:3030'
 const SOURCE_TYPES = [
   { id: 'url', label: 'Article URL' },
   { id: 'text', label: 'Paste Text' },
-  { id: 'prompt', label: 'Ask ChatGPT' }
+  { id: 'prompt', label: 'Ask ChatGPT' },
+  { id: 'load', label: 'Load' }
 ]
 
 const SENTENCE_STUDY_SEQUENCE = ['audioFrUrl', 'audioEnUrl', 'audioFrUrl']
@@ -58,6 +59,13 @@ function App() {
   const [studyState, setStudyState] = useState(createDefaultStudyState)
   const [resumeReady, setResumeReady] = useState(false)
   const [viewMode, setViewMode] = useState('setup')
+  const [savedSessions, setSavedSessions] = useState([])
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false)
+  const [loadingSessionId, setLoadingSessionId] = useState(null)
+  const [editingSessionId, setEditingSessionId] = useState(null)
+  const [editingTitle, setEditingTitle] = useState('')
+  const [updatingSessionId, setUpdatingSessionId] = useState(null)
+  const [deletingSessionId, setDeletingSessionId] = useState(null)
 
   const audioRef = useRef(null)
   const previousObjectUrlsRef = useRef([])
@@ -129,12 +137,42 @@ function App() {
     previousObjectUrlsRef.current = []
   }, [])
 
+  const fetchSavedSessions = useCallback(async () => {
+    setError('')
+    setIsLoadingSessions(true)
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/sessions`)
+      const data = await response.json()
+      if (!response.ok) {
+        throw new Error(data.error || 'Unable to retrieve saved sessions.')
+      }
+      const sessions = Array.isArray(data.sessions) ? data.sessions : []
+      setSavedSessions(sessions)
+      setEditingSessionId(null)
+      setEditingTitle('')
+      setUpdatingSessionId(null)
+      setDeletingSessionId(null)
+    } catch (fetchError) {
+      console.error(fetchError)
+      setError(fetchError instanceof Error ? fetchError.message : 'Unable to retrieve saved sessions.')
+    } finally {
+      setIsLoadingSessions(false)
+    }
+  }, [])
+
   useEffect(() => {
     return () => {
       resetPlayback()
       revokePreviousUrls()
     }
   }, [resetPlayback, revokePreviousUrls])
+
+  useEffect(() => {
+    if (sourceType === 'load') {
+      setError('')
+      fetchSavedSessions()
+    }
+  }, [fetchSavedSessions, sourceType])
 
   const attachAudio = useCallback((url, mode, onEnded) => {
     if (!url) {
@@ -456,6 +494,191 @@ function App() {
     setError('')
   }, [draftText, resetPlayback, revokePreviousUrls, segments.length])
 
+  const handleLoadSession = useCallback(
+    async (sessionId) => {
+      if (!sessionId) {
+        return
+      }
+      setLoadingSessionId(sessionId)
+      setError('')
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`)
+        const data = await response.json()
+        if (!response.ok) {
+          throw new Error(data.error || 'Unable to load the selected session.')
+        }
+
+        const rawText = (data.raw_text || '').trim()
+        const rawSegments = Array.isArray(data.segments) ? data.segments : []
+        if (!rawSegments.length) {
+          throw new Error('Saved session does not contain any segments.')
+        }
+
+        resetPlayback()
+        revokePreviousUrls()
+
+        const preparedSegments = rawSegments.map((segment, index) => {
+          const audioFr = segment?.audio_fr || null
+          const audioEn = segment?.audio_en || null
+          const audioFrUrl = createAudioUrlFromBase64(audioFr)
+          const audioEnUrl = createAudioUrlFromBase64(audioEn)
+          if (audioFrUrl) {
+            previousObjectUrlsRef.current.push(audioFrUrl)
+          }
+          if (audioEnUrl) {
+            previousObjectUrlsRef.current.push(audioEnUrl)
+          }
+
+          const rawKeyVocab = Array.isArray(segment?.key_vocab)
+            ? segment.key_vocab
+            : Array.isArray(segment?.keyVocab)
+              ? segment.keyVocab
+              : []
+
+          const preparedKeyVocab = rawKeyVocab
+            .map((item, vocabIndex) => {
+              const vocabAudioFr = item?.audio_fr || null
+              const vocabAudioEn = item?.audio_en || null
+              const vocabAudioFrUrl = createAudioUrlFromBase64(vocabAudioFr)
+              const vocabAudioEnUrl = createAudioUrlFromBase64(vocabAudioEn)
+              if (vocabAudioFrUrl) {
+                previousObjectUrlsRef.current.push(vocabAudioFrUrl)
+              }
+              if (vocabAudioEnUrl) {
+                previousObjectUrlsRef.current.push(vocabAudioEnUrl)
+              }
+
+              const french = (item?.french || '').trim()
+              const english = (item?.english || '').trim()
+              if (!french || !english) {
+                return null
+              }
+
+              return {
+                id: item?.id ?? `${segment?.id ?? index}-${vocabIndex}`,
+                french,
+                english,
+                audio_fr: vocabAudioFr,
+                audio_en: vocabAudioEn,
+                audioFrUrl: vocabAudioFrUrl,
+                audioEnUrl: vocabAudioEnUrl
+              }
+            })
+            .filter(Boolean)
+
+          return {
+            id: segment?.id ?? index,
+            french: (segment?.french || '').trim(),
+            english: (segment?.english || '').trim(),
+            audio_fr: audioFr,
+            audio_en: audioEn,
+            audioFrUrl,
+            audioEnUrl,
+            keyVocab: preparedKeyVocab
+          }
+        })
+
+        setDraftText(rawText)
+        setConfirmedText(rawText)
+        setSegments(preparedSegments)
+        setCurrentSentenceIndex(0)
+        setViewMode('study')
+      } catch (loadError) {
+        console.error(loadError)
+        setSegments([])
+        setCurrentSentenceIndex(0)
+        setViewMode('setup')
+        setError(loadError instanceof Error ? loadError.message : 'Unable to load the selected session.')
+      } finally {
+        setLoadingSessionId(null)
+      }
+    },
+    [resetPlayback, revokePreviousUrls]
+  )
+
+  const handleStartEditSession = useCallback((session) => {
+    if (!session) {
+      return
+    }
+    setError('')
+    setEditingSessionId(session.id)
+    setEditingTitle((session.title || `Lesson ${session.id}`).trim())
+  }, [])
+
+  const handleCancelEditSession = useCallback(() => {
+    setEditingSessionId(null)
+    setEditingTitle('')
+  }, [])
+
+  const handleSaveSessionTitle = useCallback(async () => {
+    if (editingSessionId == null) {
+      return
+    }
+    const trimmedTitle = editingTitle.trim()
+    if (!trimmedTitle) {
+      setError('Please provide a title before saving.')
+      return
+    }
+
+    setUpdatingSessionId(editingSessionId)
+    setError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${editingSessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmedTitle })
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data.error || 'Unable to update session.')
+      }
+      setSavedSessions((previous) =>
+        previous.map((session) => (session.id === editingSessionId ? { ...session, title: trimmedTitle } : session))
+      )
+      setEditingSessionId(null)
+      setEditingTitle('')
+    } catch (updateError) {
+      console.error(updateError)
+      setError(updateError instanceof Error ? updateError.message : 'Unable to update session.')
+    } finally {
+      setUpdatingSessionId(null)
+    }
+  }, [editingSessionId, editingTitle])
+
+  const handleDeleteSession = useCallback(
+    async (sessionId) => {
+      if (!sessionId) {
+        return
+      }
+      if (typeof window !== 'undefined' && !window.confirm('Delete this lesson? This cannot be undone.')) {
+        return
+      }
+
+      setDeletingSessionId(sessionId)
+      setError('')
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, {
+          method: 'DELETE'
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(data.error || 'Unable to delete session.')
+        }
+        setSavedSessions((previous) => previous.filter((session) => session.id !== sessionId))
+        if (editingSessionId === sessionId) {
+          setEditingSessionId(null)
+          setEditingTitle('')
+        }
+      } catch (deleteError) {
+        console.error(deleteError)
+        setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete session.')
+      } finally {
+        setDeletingSessionId(null)
+      }
+    },
+    [editingSessionId]
+  )
+
   const generationStatusMessage = useMemo(() => {
     if (!isGeneratingAudio) {
       return ''
@@ -624,6 +847,42 @@ function App() {
         })
       }
 
+      const sessionPayload = {
+        rawText: textToUse,
+        segments: preparedSegments.map((segment) => ({
+          id: segment.id,
+          french: segment.french,
+          english: segment.english,
+          audio_fr: segment.audio_fr,
+          audio_en: segment.audio_en,
+          key_vocab: Array.isArray(segment.keyVocab)
+            ? segment.keyVocab.map((item) => ({
+                id: item?.id ?? null,
+                french: item?.french || '',
+                english: item?.english || '',
+                audio_fr: item?.audio_fr || null,
+                audio_en: item?.audio_en || null
+              }))
+            : []
+        }))
+      }
+
+      try {
+        const saveResponse = await fetch(`${API_BASE_URL}/api/save-session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sessionPayload)
+        })
+        const saveData = await saveResponse.json().catch(() => ({}))
+        if (!saveResponse.ok) {
+          throw new Error(saveData.error || 'Automatic save failed.')
+        }
+      } catch (saveError) {
+        console.error(saveError)
+        const message = saveError instanceof Error ? saveError.message : 'Automatic save failed.'
+        setError((previous) => previous || `Lesson generated but automatic save failed: ${message}`)
+      }
+
       setSegments(preparedSegments)
       setCurrentSentenceIndex(0)
       setViewMode('study')
@@ -692,6 +951,98 @@ function App() {
             </button>
           </div>
         )
+      case 'load':
+        return (
+          <div className="field-group">
+            <p className="load-intro">Pick a saved lesson to continue studying.</p>
+            <div className="load-actions">
+              <button type="button" onClick={fetchSavedSessions} disabled={isLoadingSessions}>
+                {isLoadingSessions ? 'Refreshing…' : 'Refresh list'}
+              </button>
+            </div>
+            {isLoadingSessions ? (
+              <p className="load-empty">Loading saved lessons…</p>
+            ) : savedSessions.length === 0 ? (
+              <p className="load-empty">No saved lessons yet. Generate one to see it here.</p>
+            ) : (
+              <div className="load-sessions-grid">
+                {savedSessions.map((session) => {
+                  const previewText = (session?.preview || session?.raw_text || '').trim()
+                  const snippet = previewText.length > 160 ? `${previewText.slice(0, 157)}…` : previewText
+                  const isEditing = editingSessionId === session.id
+                  const isUpdating = updatingSessionId === session.id
+                  const isDeleting = deletingSessionId === session.id
+                  const loadDisabled = loadingSessionId === session.id || isUpdating || isDeleting
+                  return (
+                    <article className="load-card" key={session.id}>
+                      <header>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={editingTitle}
+                            onChange={(event) => setEditingTitle(event.target.value)}
+                            className="load-card-title-input"
+                            placeholder="Session title"
+                            disabled={isUpdating}
+                          />
+                        ) : (
+                          <h3>{(session?.title || `Lesson ${session.id}`).trim()}</h3>
+                        )}
+                      </header>
+                      <p>{snippet || 'No preview available.'}</p>
+                      <footer>
+                        {isEditing ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleCancelEditSession}
+                              disabled={isUpdating}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              className="primary"
+                              onClick={handleSaveSessionTitle}
+                              disabled={isUpdating || !editingTitle.trim()}
+                            >
+                              {isUpdating ? 'Saving…' : 'Save'}
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="primary"
+                              onClick={() => handleLoadSession(session.id)}
+                              disabled={loadDisabled}
+                            >
+                              {loadingSessionId === session.id ? 'Loading…' : 'Load'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditSession(session)}
+                              disabled={loadDisabled}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSession(session.id)}
+                              disabled={loadDisabled}
+                            >
+                              {isDeleting ? 'Deleting…' : 'Delete'}
+                            </button>
+                          </>
+                        )}
+                      </footer>
+                    </article>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
       default:
         return (
           <div className="field-group">
@@ -730,7 +1081,7 @@ function App() {
             {renderSourceControls()}
           </section>
 
-          {sourceType !== 'text' && (
+          {sourceType !== 'text' && sourceType !== 'load' && (
             <section className="panel">
               <h2>2. Review and confirm the text</h2>
               <textarea
@@ -749,12 +1100,14 @@ function App() {
             </section>
           )}
 
-          <section className="panel">
-            <h2>3. Generate audio</h2>
-            <button type="button" className="primary" onClick={handleGenerateAudio} disabled={!hasConfirmedText || isGeneratingAudio}>
-              {isGeneratingAudio ? generationStatusMessage : 'Generate Audio'}
-            </button>
-          </section>
+          {sourceType !== 'load' && (
+            <section className="panel">
+              <h2>3. Generate audio</h2>
+              <button type="button" className="primary" onClick={handleGenerateAudio} disabled={!hasConfirmedText || isGeneratingAudio}>
+                {isGeneratingAudio ? generationStatusMessage : 'Generate Audio'}
+              </button>
+            </section>
+          )}
 
           {error && <div className="error">{error}</div>}
 

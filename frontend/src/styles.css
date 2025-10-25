@@ -108,6 +108,71 @@ header p {
   color: #1e293b;
 }
 
+.load-intro {
+  margin: 0;
+  color: #475569;
+}
+
+.load-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.load-sessions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.load-card {
+  background: #f8fafc;
+  border-radius: 1rem;
+  border: 1px solid #e2e8f0;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  box-shadow: 0 20px 32px -28px rgba(15, 23, 42, 0.35);
+}
+
+.load-card header {
+  display: flex;
+  align-items: center;
+}
+
+.load-card header h3 {
+  margin: 0;
+  color: #1e293b;
+  font-size: 1.05rem;
+}
+
+.load-card-title-input {
+  width: 100%;
+  font-size: 1.05rem;
+  font-weight: 600;
+  padding: 0.6rem 0.9rem;
+}
+
+.load-card p {
+  margin: 0;
+  color: #475569;
+  line-height: 1.45;
+  flex: 1;
+}
+
+.load-card footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.load-empty {
+  margin: 0;
+  color: #64748b;
+  font-style: italic;
+}
+
 input,
 textarea,
 button {

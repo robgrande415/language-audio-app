@@ -11,3 +11,6 @@ frontend/node_modules/
 
 # Vite
 frontend/dist/
+
+# Saved lesson data
+backend/sessions/
