@@ -286,6 +286,32 @@ button:not(:disabled):hover {
   color: #334155;
 }
 
+.key-vocab-list {
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.key-vocab-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  color: #1e293b;
+}
+
+.key-vocab-item .kv-fr {
+  font-weight: 600;
+}
+
+.key-vocab-item .kv-en {
+  color: #475569;
+}
+
 @media (max-width: 720px) {
   .app-shell {
     padding: 2rem 1rem 3rem;
