@@ -52,7 +52,12 @@ function App() {
   const previousObjectUrlsRef = useRef([])
   const wasPlayingBeforeStudyRef = useRef(false)
 
-  const hasConfirmedText = useMemo(() => confirmedText.trim().length > 0, [confirmedText])
+  const hasConfirmedText = useMemo(() => {
+    if (sourceType === 'text') {
+      return draftText.trim().length > 0
+    }
+    return confirmedText.trim().length > 0
+  }, [confirmedText, draftText, sourceType])
   const hasSegments = segments.length > 0
 
   const resetPlayback = useCallback(() => {
@@ -307,10 +312,14 @@ function App() {
   }, [generationProgress, generationStage, isGeneratingAudio])
 
   const handleGenerateAudio = useCallback(async () => {
-    const textToUse = confirmedText.trim()
+    const textToUse = (sourceType === 'text' ? draftText : confirmedText).trim()
     if (!textToUse) {
-      setError('Confirm the text before generating audio.')
+      setError(sourceType === 'text' ? 'Provide text before generating audio.' : 'Confirm the text before generating audio.')
       return
+    }
+
+    if (sourceType === 'text') {
+      setConfirmedText(textToUse)
     }
 
     setIsGeneratingAudio(true)
@@ -395,7 +404,7 @@ function App() {
       setGenerationStage(null)
       setGenerationProgress({ current: 0, total: 0 })
     }
-  }, [confirmedText, resetPlayback, revokePreviousUrls])
+  }, [confirmedText, draftText, resetPlayback, revokePreviousUrls, sourceType])
 
   useEffect(() => {
     if (!hasSegments && viewMode === 'study') {
@@ -486,22 +495,24 @@ function App() {
             {renderSourceControls()}
           </section>
 
-          <section className="panel">
-            <h2>2. Review and confirm the text</h2>
-            <textarea
-              className="review-text"
-              rows={8}
-              value={draftText}
-              onChange={(event) => setDraftText(event.target.value)}
-              placeholder="Your French text will appear here."
-            />
-            <div className="actions">
-              <button type="button" onClick={handleConfirmText} disabled={!draftText.trim()}>
-                Confirm Text
-              </button>
-            </div>
-            {hasConfirmedText && <p className="hint">Text confirmed. You can still edit above and reconfirm if needed.</p>}
-          </section>
+          {sourceType !== 'text' && (
+            <section className="panel">
+              <h2>2. Review and confirm the text</h2>
+              <textarea
+                className="review-text"
+                rows={8}
+                value={draftText}
+                onChange={(event) => setDraftText(event.target.value)}
+                placeholder="Your French text will appear here."
+              />
+              <div className="actions">
+                <button type="button" onClick={handleConfirmText} disabled={!draftText.trim()}>
+                  Confirm Text
+                </button>
+              </div>
+              {hasConfirmedText && <p className="hint">Text confirmed. You can still edit above and reconfirm if needed.</p>}
+            </section>
+          )}
 
           <section className="panel">
             <h2>3. Generate audio</h2>

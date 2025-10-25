@@ -23,7 +23,17 @@ def _get_openai_client() -> OpenAI:
 
 
 def _extract_text_from_url(url: str) -> str:
-    response = requests.get(url, timeout=20)
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/118.0.0.0 Safari/537.36"
+        ),
+        "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": "https://www.google.com/",
+    }
+    response = requests.get(url, headers=headers, timeout=20)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, "html.parser")
     paragraphs = [p.get_text(strip=True) for p in soup.find_all("p")]
@@ -176,6 +186,7 @@ def _synthesize_audio(client: OpenAI, text: str) -> str:
     speech_response = client.audio.speech.create(
         model="gpt-4o-mini-tts",
         voice="alloy",
+        speed=1,
         input=text,
     )
     return _response_to_base64_audio(speech_response)
