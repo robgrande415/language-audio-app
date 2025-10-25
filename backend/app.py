@@ -2,8 +2,9 @@ import base64
 import json
 import os
 import re
+import shutil
 import tempfile
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
@@ -13,6 +14,8 @@ from openai import OpenAI
 
 app = Flask(__name__)
 CORS(app)
+
+SESSIONS_DIR = os.path.join(os.path.dirname(__file__), "sessions")
 
 
 def _get_openai_client() -> OpenAI:
@@ -201,6 +204,47 @@ def _synthesize_audio(client: OpenAI, text: str, language: str) -> str:
         instructions="Input is in " + language
     )
     return _response_to_base64_audio(speech_response)
+
+
+def _ensure_sessions_dir() -> str:
+    os.makedirs(SESSIONS_DIR, exist_ok=True)
+    return SESSIONS_DIR
+
+
+def _create_session_directory() -> Tuple[str, int]:
+    sessions_dir = _ensure_sessions_dir()
+    existing_ids: List[int] = []
+    for name in os.listdir(sessions_dir):
+        if name.isdigit():
+            existing_ids.append(int(name))
+    next_id = max(existing_ids, default=0) + 1
+    session_dir = os.path.join(sessions_dir, str(next_id))
+    os.makedirs(session_dir, exist_ok=True)
+    return session_dir, next_id
+
+
+def _write_audio_file(session_dir: str, filename: str, audio_base64: Optional[str]) -> Optional[str]:
+    if not audio_base64:
+        return None
+    try:
+        audio_bytes = base64.b64decode(audio_base64)
+    except Exception as error:  # noqa: BLE001
+        current_app.logger.error("Failed to decode audio for %s: %s", filename, error)
+        return None
+    file_path = os.path.join(session_dir, filename)
+    with open(file_path, "wb") as audio_file:
+        audio_file.write(audio_bytes)
+    return filename
+
+
+def _read_audio_file_as_base64(session_dir: str, filename: Optional[str]) -> Optional[str]:
+    if not filename:
+        return None
+    file_path = os.path.join(session_dir, filename)
+    if not os.path.exists(file_path):
+        return None
+    with open(file_path, "rb") as audio_file:
+        return base64.b64encode(audio_file.read()).decode("utf-8")
 
 
 def _build_segments(client: OpenAI, text: str) -> List[Dict[str, str]]:
@@ -409,6 +453,162 @@ def generate_audio():
         return jsonify({"error": f"Unable to generate audio: {error}"}), 500
 
     return jsonify({"segments": segments})
+
+
+@app.post("/api/save-session")
+def save_session():
+    data = request.get_json(silent=True) or {}
+    raw_text = (data.get("rawText") or data.get("raw_text") or "").strip()
+    segments = data.get("segments")
+
+    if not raw_text or not isinstance(segments, list) or not segments:
+        return jsonify({"error": "Raw text and segments are required to save a session."}), 400
+
+    try:
+        session_dir, session_id = _create_session_directory()
+    except Exception as error:  # noqa: BLE001
+        current_app.logger.exception("Unable to prepare session directory")
+        return jsonify({"error": f"Unable to prepare storage: {error}"}), 500
+
+    manifest_segments: List[Dict[str, object]] = []
+
+    try:
+        for index, segment in enumerate(segments):
+            french = (segment.get("french") or "").strip()
+            english = (segment.get("english") or "").strip()
+
+            audio_fr_file = _write_audio_file(session_dir, f"segment_{index:03d}_fr.mp3", segment.get("audio_fr"))
+            audio_en_file = _write_audio_file(session_dir, f"segment_{index:03d}_en.mp3", segment.get("audio_en"))
+
+            manifest_segment: Dict[str, object] = {
+                "id": segment.get("id", index),
+                "french": french,
+                "english": english,
+                "audio_fr_file": audio_fr_file,
+                "audio_en_file": audio_en_file,
+                "key_vocab": [],
+            }
+
+            raw_key_vocab = segment.get("key_vocab") or segment.get("keyVocab") or []
+            key_vocab_entries: List[Dict[str, object]] = []
+            if isinstance(raw_key_vocab, list):
+                for vocab_index, vocab in enumerate(raw_key_vocab):
+                    vocab_french = (vocab.get("french") or "").strip()
+                    vocab_english = (vocab.get("english") or "").strip()
+                    audio_fr_filename = _write_audio_file(
+                        session_dir,
+                        f"segment_{index:03d}_kv_{vocab_index:03d}_fr.mp3",
+                        vocab.get("audio_fr"),
+                    )
+                    audio_en_filename = _write_audio_file(
+                        session_dir,
+                        f"segment_{index:03d}_kv_{vocab_index:03d}_en.mp3",
+                        vocab.get("audio_en"),
+                    )
+                    key_vocab_entries.append(
+                        {
+                            "id": vocab.get("id", f"{index}-{vocab_index}"),
+                            "french": vocab_french,
+                            "english": vocab_english,
+                            "audio_fr_file": audio_fr_filename,
+                            "audio_en_file": audio_en_filename,
+                        }
+                    )
+            manifest_segment["key_vocab"] = key_vocab_entries
+            manifest_segments.append(manifest_segment)
+
+        manifest = {"raw_text": raw_text, "segments": manifest_segments}
+        manifest_path = os.path.join(session_dir, "manifest.json")
+        with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+            json.dump(manifest, manifest_file, ensure_ascii=False, indent=2)
+    except Exception as error:  # noqa: BLE001
+        current_app.logger.exception("Failed to save session")
+        shutil.rmtree(session_dir, ignore_errors=True)
+        return jsonify({"error": f"Unable to save session: {error}"}), 500
+
+    return jsonify({"id": session_id})
+
+
+@app.get("/api/sessions")
+def list_sessions():
+    sessions_dir = _ensure_sessions_dir()
+    sessions: List[Dict[str, object]] = []
+
+    try:
+        names = [name for name in os.listdir(sessions_dir) if name.isdigit()]
+    except FileNotFoundError:
+        names = []
+
+    for name in sorted(names, key=int, reverse=True):
+        manifest_path = os.path.join(sessions_dir, name, "manifest.json")
+        if not os.path.isfile(manifest_path):
+            continue
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+                manifest = json.load(manifest_file)
+        except Exception as error:  # noqa: BLE001
+            current_app.logger.error("Failed to read manifest for %s: %s", name, error)
+            continue
+
+        raw_text = (manifest.get("raw_text") or "").strip()
+        preview = re.sub(r"\s+", " ", raw_text.replace("\n", " ")).strip()
+        sessions.append(
+            {
+                "id": int(name),
+                "raw_text": raw_text,
+                "preview": preview[:160],
+            }
+        )
+
+    return jsonify({"sessions": sessions})
+
+
+@app.get("/api/sessions/<int:session_id>")
+def load_session(session_id: int):
+    sessions_dir = _ensure_sessions_dir()
+    session_dir = os.path.join(sessions_dir, str(session_id))
+    manifest_path = os.path.join(session_dir, "manifest.json")
+
+    if not os.path.isfile(manifest_path):
+        return jsonify({"error": "Session not found."}), 404
+
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+            manifest = json.load(manifest_file)
+    except Exception as error:  # noqa: BLE001
+        current_app.logger.exception("Failed to read session manifest")
+        return jsonify({"error": f"Unable to read session: {error}"}), 500
+
+    segments_response: List[Dict[str, object]] = []
+    raw_segments = manifest.get("segments")
+    if isinstance(raw_segments, list):
+        for index, segment in enumerate(raw_segments):
+            key_vocab_items: List[Dict[str, object]] = []
+            raw_key_vocab = segment.get("key_vocab")
+            if isinstance(raw_key_vocab, list):
+                for vocab in raw_key_vocab:
+                    key_vocab_items.append(
+                        {
+                            "id": vocab.get("id"),
+                            "french": (vocab.get("french") or "").strip(),
+                            "english": (vocab.get("english") or "").strip(),
+                            "audio_fr": _read_audio_file_as_base64(session_dir, vocab.get("audio_fr_file")),
+                            "audio_en": _read_audio_file_as_base64(session_dir, vocab.get("audio_en_file")),
+                        }
+                    )
+
+            segments_response.append(
+                {
+                    "id": segment.get("id", index),
+                    "french": (segment.get("french") or "").strip(),
+                    "english": (segment.get("english") or "").strip(),
+                    "audio_fr": _read_audio_file_as_base64(session_dir, segment.get("audio_fr_file")),
+                    "audio_en": _read_audio_file_as_base64(session_dir, segment.get("audio_en_file")),
+                    "key_vocab": key_vocab_items,
+                }
+            )
+
+    return jsonify({"raw_text": manifest.get("raw_text", ""), "segments": segments_response})
 
 
 @app.get("/api/health")
