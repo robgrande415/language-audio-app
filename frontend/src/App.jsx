@@ -781,31 +781,35 @@ function App() {
               </div>
 
               <div className="player-controls">
-                <button type="button" onClick={handleRewind} disabled={studyState.active}>
-                  ⏮️ Sentence Back
-                </button>
-                <button type="button" onClick={handlePlayPause} disabled={studyState.active || resumeReady}>
-                  {isPlaying ? '⏸️ Pause' : '▶️ Play'}
-                </button>
-                <button type="button" onClick={handleSkipForward} disabled={studyState.active}>
-                  ⏭️ Next Sentence
-                </button>
-                <button type="button" className="secondary" onClick={handleStudy} disabled={isKeyVocabStudyActive}>
-                  {isSentenceStudyActive ? 'Pause Study Mode' : '🎧 Study Sentence'}
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={handleStudyKeyVocab}
-                  disabled={isSentenceStudyActive || !currentSegmentHasKeyVocab}
-                >
-                  {isKeyVocabStudyActive ? 'Pause Study Mode' : '🗝️ Study Key Vocab'}
-                </button>
-                {resumeReady && (
-                  <button type="button" className="primary" onClick={handleResume}>
-                    Resume lesson
+                <div className="primary-controls">
+                  <button type="button" onClick={handleRewind} disabled={studyState.active}>
+                    ⏮️ Sentence Back
                   </button>
-                )}
+                  <button type="button" onClick={handlePlayPause} disabled={studyState.active || resumeReady}>
+                    {isPlaying ? '⏸️ Pause' : '▶️ Play'}
+                  </button>
+                  <button type="button" onClick={handleSkipForward} disabled={studyState.active}>
+                    ⏭️ Next Sentence
+                  </button>
+                  {resumeReady && (
+                    <button type="button" className="primary" onClick={handleResume}>
+                      Resume lesson
+                    </button>
+                  )}
+                </div>
+                <div className="study-controls">
+                  <button type="button" className="secondary" onClick={handleStudy} disabled={isKeyVocabStudyActive}>
+                    {isSentenceStudyActive ? 'Pause Study Mode' : '🎧 Study Sentence'}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={handleStudyKeyVocab}
+                    disabled={isSentenceStudyActive || !currentSegmentHasKeyVocab}
+                  >
+                    {isKeyVocabStudyActive ? 'Pause Study Mode' : '🗝️ Study Key Vocab'}
+                  </button>
+                </div>
               </div>
 
               <div className="transcript-controls">
