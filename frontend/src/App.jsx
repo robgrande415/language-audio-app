@@ -46,6 +46,7 @@ function App() {
   const [showEnglish, setShowEnglish] = useState(true)
   const [studyState, setStudyState] = useState({ active: false, index: null, step: 0 })
   const [resumeReady, setResumeReady] = useState(false)
+  const [viewMode, setViewMode] = useState('setup')
 
   const audioRef = useRef(null)
   const previousObjectUrlsRef = useRef([])
@@ -233,6 +234,7 @@ function App() {
       setSegments([])
       setCurrentSentenceIndex(0)
       setError('')
+      setViewMode('setup')
       resetPlayback()
       revokePreviousUrls()
     },
@@ -278,6 +280,7 @@ function App() {
       revokePreviousUrls()
       setSegments([])
       setCurrentSentenceIndex(0)
+      setViewMode('setup')
       resetPlayback()
     }
     setError('')
@@ -315,6 +318,7 @@ function App() {
     setGenerationProgress({ current: 0, total: 0 })
     setError('')
     resetPlayback()
+    setViewMode('setup')
 
     try {
       const translationResponse = await fetch(`${API_BASE_URL}/api/translate-sentences`, {
@@ -378,18 +382,37 @@ function App() {
 
       setSegments(preparedSegments)
       setCurrentSentenceIndex(0)
+      setViewMode('study')
     } catch (generationError) {
       console.error(generationError)
       setError(generationError.message)
       revokePreviousUrls()
       setSegments([])
       setCurrentSentenceIndex(0)
+      setViewMode('setup')
     } finally {
       setIsGeneratingAudio(false)
       setGenerationStage(null)
       setGenerationProgress({ current: 0, total: 0 })
     }
   }, [confirmedText, resetPlayback, revokePreviousUrls])
+
+  useEffect(() => {
+    if (!hasSegments && viewMode === 'study') {
+      setViewMode('setup')
+    }
+  }, [hasSegments, viewMode])
+
+  const handleOpenStudy = useCallback(() => {
+    if (hasSegments) {
+      setViewMode('study')
+    }
+  }, [hasSegments])
+
+  const handleBackToSetup = useCallback(() => {
+    resetPlayback()
+    setViewMode('setup')
+  }, [resetPlayback])
 
   const renderSourceControls = () => {
     switch (sourceType) {
@@ -448,96 +471,119 @@ function App() {
         <p>Generate bilingual audio lessons from any French text.</p>
       </header>
 
-      <section className="panel">
-        <h2>1. Choose your source</h2>
-        <div className="source-picker">
-          {SOURCE_TYPES.map((type) => (
-            <label key={type.id} className={sourceType === type.id ? 'active' : ''}>
-              <input type="radio" name="source" value={type.id} checked={sourceType === type.id} onChange={handleSourceChange} />
-              {type.label}
-            </label>
-          ))}
-        </div>
-        {renderSourceControls()}
-      </section>
+      {viewMode === 'setup' ? (
+        <>
+          <section className="panel">
+            <h2>1. Choose your source</h2>
+            <div className="source-picker">
+              {SOURCE_TYPES.map((type) => (
+                <label key={type.id} className={sourceType === type.id ? 'active' : ''}>
+                  <input type="radio" name="source" value={type.id} checked={sourceType === type.id} onChange={handleSourceChange} />
+                  {type.label}
+                </label>
+              ))}
+            </div>
+            {renderSourceControls()}
+          </section>
 
-      <section className="panel">
-        <h2>2. Review and confirm the text</h2>
-        <textarea
-          className="review-text"
-          rows={8}
-          value={draftText}
-          onChange={(event) => setDraftText(event.target.value)}
-          placeholder="Your French text will appear here."
-        />
-        <div className="actions">
-          <button type="button" onClick={handleConfirmText} disabled={!draftText.trim()}>
-            Confirm Text
-          </button>
-        </div>
-        {hasConfirmedText && <p className="hint">Text confirmed. You can still edit above and reconfirm if needed.</p>}
-      </section>
-
-      <section className="panel">
-        <h2>3. Generate audio</h2>
-        <button type="button" className="primary" onClick={handleGenerateAudio} disabled={!hasConfirmedText || isGeneratingAudio}>
-          {isGeneratingAudio ? generationStatusMessage : 'Generate Audio'}
-        </button>
-      </section>
-
-      {error && <div className="error">{error}</div>}
-
-      {hasSegments && (
-        <section className="panel">
-          <h2>4. Listen and study</h2>
-          <div className="player-controls">
-            <button type="button" onClick={handleRewind} disabled={studyState.active}>
-              ⏮️ Sentence Back
-            </button>
-            <button type="button" onClick={handlePlayPause} disabled={studyState.active || resumeReady}>
-              {isPlaying ? '⏸️ Pause' : '▶️ Play'}
-            </button>
-            <button type="button" onClick={handleSkipForward} disabled={studyState.active}>
-              ⏭️ Next Sentence
-            </button>
-            <button type="button" className="secondary" onClick={handleStudy} disabled={studyState.active}>
-              🎧 Study
-            </button>
-            {resumeReady && (
-              <button type="button" className="primary" onClick={handleResume}>
-                Resume lesson
+          <section className="panel">
+            <h2>2. Review and confirm the text</h2>
+            <textarea
+              className="review-text"
+              rows={8}
+              value={draftText}
+              onChange={(event) => setDraftText(event.target.value)}
+              placeholder="Your French text will appear here."
+            />
+            <div className="actions">
+              <button type="button" onClick={handleConfirmText} disabled={!draftText.trim()}>
+                Confirm Text
               </button>
-            )}
-          </div>
+            </div>
+            {hasConfirmedText && <p className="hint">Text confirmed. You can still edit above and reconfirm if needed.</p>}
+          </section>
 
-          <div className="transcript-controls">
-            <button type="button" onClick={() => setShowFrench((previous) => !previous)}>
-              FR {showFrench ? '👁️' : '🚫'}
+          <section className="panel">
+            <h2>3. Generate audio</h2>
+            <button type="button" className="primary" onClick={handleGenerateAudio} disabled={!hasConfirmedText || isGeneratingAudio}>
+              {isGeneratingAudio ? generationStatusMessage : 'Generate Audio'}
             </button>
-            <button type="button" onClick={() => setShowEnglish((previous) => !previous)}>
-              EN {showEnglish ? '👁️' : '🚫'}
-            </button>
-          </div>
+          </section>
 
-          <ol className="transcript">
-            {segments.map((segment, index) => {
-              const isActive = index === currentSentenceIndex && !studyState.active
-              return (
-                <li key={segment.id} className={isActive ? 'active' : ''}>
-                  <div className="sentence-header">
-                    <span>Sentence {index + 1}</span>
-                    <div className="tags">
-                      <span className="tag">FR audio</span>
-                      <span className="tag">EN audio</span>
-                    </div>
-                  </div>
-                  {showFrench && <p className="french">{segment.french}</p>}
-                  {showEnglish && <p className="english">{segment.english}</p>}
-                </li>
-              )
-            })}
-          </ol>
-        </section>
+          {error && <div className="error">{error}</div>}
+
+          {hasSegments && (
+            <section className="panel ready-panel">
+              <h2>4. Listen and study</h2>
+              <p>Your lesson is ready! Head to the study view to listen and follow along with each sentence.</p>
+              <button type="button" className="primary" onClick={handleOpenStudy}>
+                Open Listen &amp; Study
+              </button>
+            </section>
+          )}
+        </>
+      ) : (
+        <>
+          {error && <div className="error">{error}</div>}
+          {hasSegments && (
+            <section className="panel study-panel">
+              <div className="study-header">
+                <button type="button" className="back-button" onClick={handleBackToSetup}>
+                  ← Back to steps 1–3
+                </button>
+                <h2>4. Listen and study</h2>
+              </div>
+
+              <div className="player-controls">
+                <button type="button" onClick={handleRewind} disabled={studyState.active}>
+                  ⏮️ Sentence Back
+                </button>
+                <button type="button" onClick={handlePlayPause} disabled={studyState.active || resumeReady}>
+                  {isPlaying ? '⏸️ Pause' : '▶️ Play'}
+                </button>
+                <button type="button" onClick={handleSkipForward} disabled={studyState.active}>
+                  ⏭️ Next Sentence
+                </button>
+                <button type="button" className="secondary" onClick={handleStudy} disabled={studyState.active}>
+                  🎧 Study
+                </button>
+                {resumeReady && (
+                  <button type="button" className="primary" onClick={handleResume}>
+                    Resume lesson
+                  </button>
+                )}
+              </div>
+
+              <div className="transcript-controls">
+                <button type="button" onClick={() => setShowFrench((previous) => !previous)}>
+                  FR {showFrench ? '👁️' : '🚫'}
+                </button>
+                <button type="button" onClick={() => setShowEnglish((previous) => !previous)}>
+                  EN {showEnglish ? '👁️' : '🚫'}
+                </button>
+              </div>
+
+              <ol className="transcript">
+                {segments.map((segment, index) => {
+                  const isActive = index === currentSentenceIndex && !studyState.active
+                  return (
+                    <li key={segment.id} className={isActive ? 'active' : ''}>
+                      <div className="sentence-header">
+                        <span>Sentence {index + 1}</span>
+                        <div className="tags">
+                          <span className="tag">FR audio</span>
+                          <span className="tag">EN audio</span>
+                        </div>
+                      </div>
+                      {showFrench && <p className="french">{segment.french}</p>}
+                      {showEnglish && <p className="english">{segment.english}</p>}
+                    </li>
+                  )
+                })}
+              </ol>
+            </section>
+          )}
+        </>
       )}
     </main>
   )
