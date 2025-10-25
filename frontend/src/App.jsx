@@ -53,6 +53,7 @@ function App() {
   const [error, setError] = useState('')
   const [showFrench, setShowFrench] = useState(false)
   const [showEnglish, setShowEnglish] = useState(false)
+  const [showKeyVocab, setShowKeyVocab] = useState(false)
   const [studyState, setStudyState] = useState(createDefaultStudyState)
   const [resumeReady, setResumeReady] = useState(false)
   const [viewMode, setViewMode] = useState('setup')
@@ -724,6 +725,9 @@ function App() {
                 <button type="button" onClick={() => setShowEnglish((previous) => !previous)}>
                   EN {showEnglish ? '👁️' : '🚫'}
                 </button>
+                <button type="button" onClick={() => setShowKeyVocab((previous) => !previous)}>
+                  Key Vocab {showKeyVocab ? '👁️' : '🚫'}
+                </button>
               </div>
 
               <ol className="transcript">
@@ -740,7 +744,7 @@ function App() {
                       </div>
                       {showFrench && <p className="french">{segment.french}</p>}
                       {showEnglish && <p className="english">{segment.english}</p>}
-                      {segment.keyVocab?.length > 0 && (
+                      {showKeyVocab && segment.keyVocab?.length > 0 && (
                         <ul className="key-vocab-list">
                           {segment.keyVocab.map((item, vocabIndex) => (
                             <li key={item?.id ?? `${segment.id}-kv-${vocabIndex}`} className="key-vocab-item">
