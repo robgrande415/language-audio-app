@@ -8,7 +8,17 @@ const SOURCE_TYPES = [
   { id: 'prompt', label: 'Ask ChatGPT' }
 ]
 
-const STUDY_SEQUENCE = ['audioFrUrl', 'audioEnUrl', 'audioFrUrl']
+const SENTENCE_STUDY_SEQUENCE = ['audioFrUrl', 'audioEnUrl', 'audioFrUrl']
+const KEY_VOCAB_SEQUENCE = ['audioFrUrl', 'audioEnUrl', 'audioFrUrl']
+const STUDY_DELAY_MS = 250
+
+const createDefaultStudyState = () => ({
+  active: false,
+  index: null,
+  step: 0,
+  mode: null,
+  vocabIndex: 0
+})
 
 function createAudioUrlFromBase64(base64String) {
   if (!base64String) return null
@@ -44,13 +54,47 @@ function App() {
   const [error, setError] = useState('')
   const [showFrench, setShowFrench] = useState(false)
   const [showEnglish, setShowEnglish] = useState(false)
-  const [studyState, setStudyState] = useState({ active: false, index: null, step: 0 })
+  const [showKeyVocab, setShowKeyVocab] = useState(false)
+  const [studyState, setStudyState] = useState(createDefaultStudyState)
   const [resumeReady, setResumeReady] = useState(false)
   const [viewMode, setViewMode] = useState('setup')
 
   const audioRef = useRef(null)
   const previousObjectUrlsRef = useRef([])
   const wasPlayingBeforeStudyRef = useRef(false)
+  const studyDelayTimeoutRef = useRef(null)
+
+  const clearStudyDelayTimeout = useCallback(() => {
+    if (studyDelayTimeoutRef.current) {
+      clearTimeout(studyDelayTimeoutRef.current)
+      studyDelayTimeoutRef.current = null
+    }
+  }, [])
+
+  const scheduleStudyContinuation = useCallback(
+    (callback) => {
+      clearStudyDelayTimeout()
+      studyDelayTimeoutRef.current = setTimeout(() => {
+        studyDelayTimeoutRef.current = null
+        callback()
+      }, STUDY_DELAY_MS)
+    },
+    [clearStudyDelayTimeout]
+  )
+
+  const stopStudyMode = useCallback(() => {
+    const audio = audioRef.current
+    if (audio) {
+      audio.pause()
+      audio.onended = null
+      audio.onerror = null
+      audioRef.current = null
+    }
+    clearStudyDelayTimeout()
+    setIsPlaying(false)
+    setStudyState(createDefaultStudyState())
+    setResumeReady(Boolean(wasPlayingBeforeStudyRef.current))
+  }, [clearStudyDelayTimeout])
 
   const hasConfirmedText = useMemo(() => {
     if (sourceType === 'text') {
@@ -59,6 +103,10 @@ function App() {
     return confirmedText.trim().length > 0
   }, [confirmedText, draftText, sourceType])
   const hasSegments = segments.length > 0
+  const currentSegment = hasSegments ? segments[currentSentenceIndex] : null
+  const currentSegmentHasKeyVocab = Array.isArray(currentSegment?.keyVocab) && currentSegment.keyVocab.length > 0
+  const isSentenceStudyActive = studyState.active && studyState.mode === 'sentence'
+  const isKeyVocabStudyActive = studyState.active && studyState.mode === 'keyVocab'
 
   const resetPlayback = useCallback(() => {
     if (audioRef.current) {
@@ -66,10 +114,11 @@ function App() {
       audioRef.current.onended = null
       audioRef.current = null
     }
+    clearStudyDelayTimeout()
     setIsPlaying(false)
-    setStudyState({ active: false, index: null, step: 0 })
+    setStudyState(createDefaultStudyState())
     setResumeReady(false)
-  }, [])
+  }, [clearStudyDelayTimeout])
 
   const revokePreviousUrls = useCallback(() => {
     previousObjectUrlsRef.current.forEach((url) => {
@@ -189,10 +238,48 @@ function App() {
 
   const handleStudy = useCallback(() => {
     if (!hasSegments) return
+    if (studyState.active && studyState.mode === 'sentence') {
+      stopStudyMode()
+      return
+    }
     wasPlayingBeforeStudyRef.current = isPlaying
     resetPlayback()
-    setStudyState({ active: true, index: currentSentenceIndex, step: 0 })
-  }, [currentSentenceIndex, hasSegments, isPlaying, resetPlayback])
+    setStudyState({ ...createDefaultStudyState(), active: true, index: currentSentenceIndex, mode: 'sentence' })
+  }, [
+    currentSentenceIndex,
+    hasSegments,
+    isPlaying,
+    resetPlayback,
+    stopStudyMode,
+    studyState.active,
+    studyState.mode
+  ])
+
+  const handleStudyKeyVocab = useCallback(() => {
+    if (!hasSegments || !currentSegmentHasKeyVocab) return
+    if (studyState.active && studyState.mode === 'keyVocab') {
+      stopStudyMode()
+      return
+    }
+    wasPlayingBeforeStudyRef.current = isPlaying
+    resetPlayback()
+    setStudyState({
+      ...createDefaultStudyState(),
+      active: true,
+      index: currentSentenceIndex,
+      mode: 'keyVocab',
+      vocabIndex: 0
+    })
+  }, [
+    currentSentenceIndex,
+    currentSegmentHasKeyVocab,
+    hasSegments,
+    isPlaying,
+    resetPlayback,
+    stopStudyMode,
+    studyState.active,
+    studyState.mode
+  ])
 
   useEffect(() => {
     if (!studyState.active || studyState.index == null) {
@@ -201,32 +288,110 @@ function App() {
 
     const segment = segments[studyState.index]
     if (!segment) {
-      setStudyState({ active: false, index: null, step: 0 })
+      setStudyState(createDefaultStudyState())
       return
     }
 
-    const audioKey = STUDY_SEQUENCE[studyState.step]
-    const url = segment[audioKey]
+    if (studyState.mode === 'sentence') {
+      const audioKey = SENTENCE_STUDY_SEQUENCE[studyState.step]
+      const url = segment[audioKey]
 
-    attachAudio(url, 'study', () => {
-      setStudyState((previous) => {
-        const nextStep = previous.step + 1
-        if (nextStep < STUDY_SEQUENCE.length) {
-          return { ...previous, step: nextStep }
-        }
-        setResumeReady(true)
-        return { active: false, index: null, step: 0 }
+      attachAudio(url, 'study', () => {
+        scheduleStudyContinuation(() => {
+          let shouldMarkResume = false
+          setStudyState((previous) => {
+            if (previous.mode !== 'sentence') {
+              return previous
+            }
+            const nextStep = previous.step + 1
+            if (nextStep < SENTENCE_STUDY_SEQUENCE.length) {
+              return { ...previous, step: nextStep }
+            }
+            shouldMarkResume = true
+            return createDefaultStudyState()
+          })
+          if (shouldMarkResume) {
+            setResumeReady(true)
+          }
+        })
       })
-    })
-  }, [attachAudio, segments, studyState])
+      return
+    }
+
+    if (studyState.mode === 'keyVocab') {
+      const vocabList = Array.isArray(segment.keyVocab) ? segment.keyVocab : []
+      if (!vocabList.length) {
+        setResumeReady(true)
+        setStudyState(createDefaultStudyState())
+        return
+      }
+
+      if (studyState.vocabIndex >= vocabList.length) {
+        scheduleStudyContinuation(() => {
+          attachAudio(segment.audioFrUrl, 'study', () => {
+            scheduleStudyContinuation(() => {
+              setResumeReady(true)
+              setStudyState(createDefaultStudyState())
+            })
+          })
+        })
+        return
+      }
+
+      const vocab = vocabList[studyState.vocabIndex]
+      const audioKey = KEY_VOCAB_SEQUENCE[studyState.step]
+      const url = vocab?.[audioKey]
+
+      attachAudio(url, 'study', () => {
+        scheduleStudyContinuation(() => {
+          setStudyState((previous) => {
+            if (previous.mode !== 'keyVocab') {
+              return previous
+            }
+            let nextStep = previous.step + 1
+            let nextVocabIndex = previous.vocabIndex
+            if (nextStep >= KEY_VOCAB_SEQUENCE.length) {
+              nextStep = 0
+              nextVocabIndex += 1
+            }
+            return {
+              ...previous,
+              step: nextStep,
+              vocabIndex: nextVocabIndex
+            }
+          })
+        })
+      })
+    }
+  }, [attachAudio, scheduleStudyContinuation, segments, studyState])
 
   const handleResume = useCallback(() => {
     setResumeReady(false)
-    setStudyState({ active: false, index: null, step: 0 })
+    setStudyState(createDefaultStudyState())
     if (wasPlayingBeforeStudyRef.current) {
       playSentence(currentSentenceIndex)
     }
   }, [currentSentenceIndex, playSentence])
+
+  const handleSelectSentence = useCallback(
+    (index) => {
+      if (!hasSegments || index < 0 || index >= segments.length) {
+        return
+      }
+
+      if (index === currentSentenceIndex) {
+        if (isPlaying && audioRef.current) {
+          audioRef.current.pause()
+          setIsPlaying(false)
+          return
+        }
+      }
+
+      resetPlayback()
+      playSentence(index)
+    },
+    [currentSentenceIndex, hasSegments, isPlaying, playSentence, resetPlayback, segments.length]
+  )
 
   const handleSourceChange = useCallback(
     (event) => {
@@ -342,11 +507,22 @@ function App() {
 
       const translatedPairs = Array.isArray(translationData.sentences) ? translationData.sentences : []
       const sanitizedPairs = translatedPairs
-        .map((pair, index) => ({
-          id: pair?.id ?? index,
-          french: (pair?.french || '').trim(),
-          english: (pair?.english || '').trim()
-        }))
+        .map((pair, index) => {
+          const rawKeyVocab = Array.isArray(pair?.key_vocab) ? pair.key_vocab : []
+          const keyVocab = rawKeyVocab
+            .map((item) => ({
+              french: (item?.french || '').trim(),
+              english: (item?.english || '').trim()
+            }))
+            .filter((item) => item.french && item.english)
+
+          return {
+            id: pair?.id ?? index,
+            french: (pair?.french || '').trim(),
+            english: (pair?.english || '').trim(),
+            keyVocab
+          }
+        })
         .filter((pair) => pair.french && pair.english)
 
       revokePreviousUrls()
@@ -367,7 +543,7 @@ function App() {
         const audioResponse = await fetch(`${API_BASE_URL}/api/generate-segment-audio`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ french: pair.french, english: pair.english })
+          body: JSON.stringify({ french: pair.french, english: pair.english, key_vocab: pair.keyVocab })
         })
 
         const audioData = await audioResponse.json()
@@ -377,7 +553,65 @@ function App() {
 
         const audioFrUrl = createAudioUrlFromBase64(audioData.audio_fr)
         const audioEnUrl = createAudioUrlFromBase64(audioData.audio_en)
-        previousObjectUrlsRef.current.push(audioFrUrl, audioEnUrl)
+        if (audioFrUrl) {
+          previousObjectUrlsRef.current.push(audioFrUrl)
+        }
+        if (audioEnUrl) {
+          previousObjectUrlsRef.current.push(audioEnUrl)
+        }
+
+        const audioKeyVocab = Array.isArray(audioData.key_vocab) ? audioData.key_vocab : []
+        let keyVocab = audioKeyVocab
+          .map((item, vocabIndex) => {
+            const french = (item?.french || pair.keyVocab?.[vocabIndex]?.french || '').trim()
+            const english = (item?.english || pair.keyVocab?.[vocabIndex]?.english || '').trim()
+            if (!french || !english) {
+              return null
+            }
+            const vocabAudioFrUrl = createAudioUrlFromBase64(item?.audio_fr)
+            const vocabAudioEnUrl = createAudioUrlFromBase64(item?.audio_en)
+            if (vocabAudioFrUrl) {
+              previousObjectUrlsRef.current.push(vocabAudioFrUrl)
+            }
+            if (vocabAudioEnUrl) {
+              previousObjectUrlsRef.current.push(vocabAudioEnUrl)
+            }
+            return {
+              id: item?.id ?? `${pair.id}-${vocabIndex}`,
+              french,
+              english,
+              audio_fr: item?.audio_fr || null,
+              audio_en: item?.audio_en || null,
+              audioFrUrl: vocabAudioFrUrl,
+              audioEnUrl: vocabAudioEnUrl
+            }
+          })
+          .filter(Boolean)
+
+        if (Array.isArray(pair.keyVocab)) {
+          pair.keyVocab.forEach((item, vocabIndex) => {
+            const french = item?.french
+            const english = item?.english
+            if (!french || !english) {
+              return
+            }
+            const alreadyIncluded = keyVocab.some(
+              (existing) => existing?.french === french && existing?.english === english
+            )
+            if (!alreadyIncluded) {
+              keyVocab.push({
+                id: `${pair.id}-${vocabIndex}`,
+                french,
+                english,
+                audio_fr: null,
+                audio_en: null,
+                audioFrUrl: null,
+                audioEnUrl: null
+              })
+            }
+          })
+        }
+
         preparedSegments.push({
           id: pair.id,
           french: pair.french,
@@ -385,7 +619,8 @@ function App() {
           audio_fr: audioData.audio_fr,
           audio_en: audioData.audio_en,
           audioFrUrl,
-          audioEnUrl
+          audioEnUrl,
+          keyVocab
         })
       }
 
@@ -546,23 +781,35 @@ function App() {
               </div>
 
               <div className="player-controls">
-                <button type="button" onClick={handleRewind} disabled={studyState.active}>
-                  ⏮️ Sentence Back
-                </button>
-                <button type="button" onClick={handlePlayPause} disabled={studyState.active || resumeReady}>
-                  {isPlaying ? '⏸️ Pause' : '▶️ Play'}
-                </button>
-                <button type="button" onClick={handleSkipForward} disabled={studyState.active}>
-                  ⏭️ Next Sentence
-                </button>
-                <button type="button" className="secondary" onClick={handleStudy} disabled={studyState.active}>
-                  🎧 Study
-                </button>
-                {resumeReady && (
-                  <button type="button" className="primary" onClick={handleResume}>
-                    Resume lesson
+                <div className="primary-controls">
+                  <button type="button" onClick={handleRewind} disabled={studyState.active}>
+                    ⏮️ Sentence Back
                   </button>
-                )}
+                  <button type="button" onClick={handlePlayPause} disabled={studyState.active || resumeReady}>
+                    {isPlaying ? '⏸️ Pause' : '▶️ Play'}
+                  </button>
+                  <button type="button" onClick={handleSkipForward} disabled={studyState.active}>
+                    ⏭️ Next Sentence
+                  </button>
+                  {resumeReady && (
+                    <button type="button" className="primary" onClick={handleResume}>
+                      Resume lesson
+                    </button>
+                  )}
+                </div>
+                <div className="study-controls">
+                  <button type="button" className="secondary" onClick={handleStudy} disabled={isKeyVocabStudyActive}>
+                    {isSentenceStudyActive ? 'Pause Study Mode' : '🎧 Study Sentence'}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={handleStudyKeyVocab}
+                    disabled={isSentenceStudyActive || !currentSegmentHasKeyVocab}
+                  >
+                    {isKeyVocabStudyActive ? 'Pause Study Mode' : '🗝️ Study Key Vocab'}
+                  </button>
+                </div>
               </div>
 
               <div className="transcript-controls">
@@ -572,13 +819,28 @@ function App() {
                 <button type="button" onClick={() => setShowEnglish((previous) => !previous)}>
                   EN {showEnglish ? '👁️' : '🚫'}
                 </button>
+                <button type="button" onClick={() => setShowKeyVocab((previous) => !previous)}>
+                  Key Vocab {showKeyVocab ? '👁️' : '🚫'}
+                </button>
               </div>
 
               <ol className="transcript">
                 {segments.map((segment, index) => {
                   const isActive = index === currentSentenceIndex && !studyState.active
                   return (
-                    <li key={segment.id} className={isActive ? 'active' : ''}>
+                    <li
+                      key={segment.id}
+                      className={isActive ? 'active' : ''}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleSelectSentence(index)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          handleSelectSentence(index)
+                        }
+                      }}
+                    >
                       <div className="sentence-header">
                         <span>Sentence {index + 1}</span>
                         <div className="tags">
@@ -588,6 +850,16 @@ function App() {
                       </div>
                       {showFrench && <p className="french">{segment.french}</p>}
                       {showEnglish && <p className="english">{segment.english}</p>}
+                      {showKeyVocab && segment.keyVocab?.length > 0 && (
+                        <ul className="key-vocab-list">
+                          {segment.keyVocab.map((item, vocabIndex) => (
+                            <li key={item?.id ?? `${segment.id}-kv-${vocabIndex}`} className="key-vocab-item">
+                              <span className="kv-fr">{item?.french}</span>
+                              <span className="kv-en">{item?.english}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </li>
                   )
                 })}

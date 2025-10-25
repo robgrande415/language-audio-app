@@ -91,10 +91,15 @@ def _split_and_translate_sentences(client: OpenAI, sentences: List[str]) -> List
     {
         raw_text: sentences in french,
         sentences: [
-            {"english": English translation of sentence 0, "french": French translation of sentence 0},
-            {"english": English translation of sentence 1, "french": French translation of sentence 1},
+            {
+                "english": English translation of sentence 0,
+                "french": French translation of sentence 0,
+                "key_vocab": [
+                    {"french": "key french word", "english": "english meaning"},
+                    ...
+                ]
+            },
             ...
-            {"english": English translation of sentence N, "french": French translation of sentence N}
         ]
     }
     """
@@ -104,11 +109,16 @@ def _split_and_translate_sentences(client: OpenAI, sentences: List[str]) -> List
         "content": (
             f"Translate each of the following French sentences into English. "
             f"Return a JSON object using the following format {schema}\n\n"
+            f"For each sentence include a key_vocab list with 2-5 important, non-obvious French words or short phrases "
+            f"that could confuse a learner. Provide the original French and a concise English gloss.\n\n"
             f"Sentences: {json.dumps(sentences, ensure_ascii=False)}"
         ),
     }
 
-    message_context = f"You translate French into English and respond using JSON only for a web application.\n Use the format {schema}"
+    message_context = (
+        f"You translate French into English and respond using JSON only for a web application.\n"
+        f"Use the format {schema} and ensure key_vocab items focus on challenging or idiomatic terms while avoiding obvious words."
+    )
     current_app.logger.info("OpenAI system prompt: %s", message_context) 
     current_app.logger.info("OpenAI prompt: %s", prompt) 
     response = client.responses.create(
@@ -182,12 +192,13 @@ def _response_to_base64_audio(response_obj) -> str:
     return base64.b64encode(audio_bytes).decode("utf-8")
 
 
-def _synthesize_audio(client: OpenAI, text: str) -> str:
+def _synthesize_audio(client: OpenAI, text: str, language: str) -> str:
     speech_response = client.audio.speech.create(
         model="gpt-4o-mini-tts",
         voice="alloy",
         speed=1,
         input=text,
+        instructions="Input is in " + language
     )
     return _response_to_base64_audio(speech_response)
 
@@ -203,8 +214,27 @@ def _build_segments(client: OpenAI, text: str) -> List[Dict[str, str]]:
         if not french or not english:
             current_app.logger.info("Skipping :", pair)
             continue
-        french_audio = _synthesize_audio(client, french)
-        english_audio = _synthesize_audio(client, english)
+        french_audio = _synthesize_audio(client, french, 'french')
+        english_audio = _synthesize_audio(client, english, 'english')
+        key_vocab_audio: List[Dict[str, str]] = []
+        raw_key_vocab = pair.get("key_vocab")
+        if isinstance(raw_key_vocab, list):
+            for vocab_index, vocab in enumerate(raw_key_vocab):
+                vocab_fr = (vocab.get("french") or "").strip()
+                vocab_en = (vocab.get("english") or "").strip()
+                if not vocab_fr or not vocab_en:
+                    continue
+                vocab_fr_audio = _synthesize_audio(client, vocab_fr, 'french')
+                vocab_en_audio = _synthesize_audio(client, vocab_en, 'english')
+                key_vocab_audio.append(
+                    {
+                        "id": f"{index}-{vocab_index}",
+                        "french": vocab_fr,
+                        "english": vocab_en,
+                        "audio_fr": vocab_fr_audio,
+                        "audio_en": vocab_en_audio,
+                    }
+                )
         segments.append(
             {
                 "id": index,
@@ -212,6 +242,7 @@ def _build_segments(client: OpenAI, text: str) -> List[Dict[str, str]]:
                 "english": english,
                 "audio_fr": french_audio,
                 "audio_en": english_audio,
+                "key_vocab": key_vocab_audio,
             }
         )
 
@@ -292,7 +323,24 @@ def translate_sentences():
         english = (pair.get("english") or "").strip()
         if not french or not english:
             continue
-        prepared_pairs.append({"id": index, "french": french, "english": english})
+        key_vocab_items: List[Dict[str, str]] = []
+        raw_key_vocab = pair.get("key_vocab")
+        if isinstance(raw_key_vocab, list):
+            for vocab in raw_key_vocab:
+                vocab_fr = (vocab.get("french") or "").strip()
+                vocab_en = (vocab.get("english") or "").strip()
+                if not vocab_fr or not vocab_en:
+                    continue
+                key_vocab_items.append({"french": vocab_fr, "english": vocab_en})
+
+        prepared_pairs.append(
+            {
+                "id": index,
+                "french": french,
+                "english": english,
+                "key_vocab": key_vocab_items,
+            }
+        )
 
     if not prepared_pairs:
         return jsonify({"error": "No sentences were detected in the provided text."}), 422
@@ -309,16 +357,39 @@ def generate_segment_audio():
     if not french or not english:
         return jsonify({"error": "Both French and English sentences are required."}), 400
 
+    raw_key_vocab = data.get("key_vocab")
+    sanitized_key_vocab: List[Dict[str, str]] = []
+    if isinstance(raw_key_vocab, list):
+        for vocab in raw_key_vocab:
+            vocab_fr = (vocab.get("french") or "").strip()
+            vocab_en = (vocab.get("english") or "").strip()
+            if not vocab_fr or not vocab_en:
+                continue
+            sanitized_key_vocab.append({"french": vocab_fr, "english": vocab_en})
+
     try:
         client = _get_openai_client()
-        french_audio = _synthesize_audio(client, french)
-        english_audio = _synthesize_audio(client, english)
+        french_audio = _synthesize_audio(client, french, 'french')
+        english_audio = _synthesize_audio(client, english, 'english')
+        key_vocab_audio: List[Dict[str, str]] = []
+        for vocab_index, vocab in enumerate(sanitized_key_vocab):
+            vocab_fr_audio = _synthesize_audio(client, vocab["french"],'french')
+            vocab_en_audio = _synthesize_audio(client, vocab["english"],'english')
+            key_vocab_audio.append(
+                {
+                    "id": f"{vocab_index}",
+                    "french": vocab["french"],
+                    "english": vocab["english"],
+                    "audio_fr": vocab_fr_audio,
+                    "audio_en": vocab_en_audio,
+                }
+            )
     except RuntimeError as error:
         return jsonify({"error": str(error)}), 500
     except Exception as error:  # noqa: BLE001
         return jsonify({"error": f"Unable to synthesize audio: {error}"}), 500
 
-    return jsonify({"audio_fr": french_audio, "audio_en": english_audio})
+    return jsonify({"audio_fr": french_audio, "audio_en": english_audio, "key_vocab": key_vocab_audio})
 
 
 @app.post("/api/generate-audio")
