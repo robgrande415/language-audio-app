@@ -192,12 +192,13 @@ def _response_to_base64_audio(response_obj) -> str:
     return base64.b64encode(audio_bytes).decode("utf-8")
 
 
-def _synthesize_audio(client: OpenAI, text: str) -> str:
+def _synthesize_audio(client: OpenAI, text: str, language: str) -> str:
     speech_response = client.audio.speech.create(
         model="gpt-4o-mini-tts",
         voice="alloy",
         speed=1,
         input=text,
+        instructions="Input is in " + language
     )
     return _response_to_base64_audio(speech_response)
 
@@ -213,8 +214,8 @@ def _build_segments(client: OpenAI, text: str) -> List[Dict[str, str]]:
         if not french or not english:
             current_app.logger.info("Skipping :", pair)
             continue
-        french_audio = _synthesize_audio(client, french)
-        english_audio = _synthesize_audio(client, english)
+        french_audio = _synthesize_audio(client, french, 'french')
+        english_audio = _synthesize_audio(client, english, 'english')
         key_vocab_audio: List[Dict[str, str]] = []
         raw_key_vocab = pair.get("key_vocab")
         if isinstance(raw_key_vocab, list):
@@ -223,8 +224,8 @@ def _build_segments(client: OpenAI, text: str) -> List[Dict[str, str]]:
                 vocab_en = (vocab.get("english") or "").strip()
                 if not vocab_fr or not vocab_en:
                     continue
-                vocab_fr_audio = _synthesize_audio(client, vocab_fr)
-                vocab_en_audio = _synthesize_audio(client, vocab_en)
+                vocab_fr_audio = _synthesize_audio(client, vocab_fr, 'french')
+                vocab_en_audio = _synthesize_audio(client, vocab_en, 'english')
                 key_vocab_audio.append(
                     {
                         "id": f"{index}-{vocab_index}",
@@ -368,12 +369,12 @@ def generate_segment_audio():
 
     try:
         client = _get_openai_client()
-        french_audio = _synthesize_audio(client, french)
-        english_audio = _synthesize_audio(client, english)
+        french_audio = _synthesize_audio(client, french, 'french')
+        english_audio = _synthesize_audio(client, english, 'english')
         key_vocab_audio: List[Dict[str, str]] = []
         for vocab_index, vocab in enumerate(sanitized_key_vocab):
-            vocab_fr_audio = _synthesize_audio(client, vocab["french"])
-            vocab_en_audio = _synthesize_audio(client, vocab["english"])
+            vocab_fr_audio = _synthesize_audio(client, vocab["french"],'french')
+            vocab_en_audio = _synthesize_audio(client, vocab["english"],'english')
             key_vocab_audio.append(
                 {
                     "id": f"{vocab_index}",
