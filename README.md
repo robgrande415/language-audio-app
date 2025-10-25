@@ -1,36 +1,55 @@
 # language-audio-app
 
-App to learn language grammar and words using audio.
+Create bilingual audio lessons from French articles, prompts, or pasted passages.
 
 ## Development setup
 
-This repository now contains a minimal full-stack "Hello World" example with a Flask backend and a React (Vite) frontend. The two services run independently so that you can iterate on each side without rebuilding the other.
+The project is a full-stack app with a Flask backend and a React (Vite) frontend. Run them separately so you can iterate on each side without rebuilding the other.
 
 ### Backend (Flask)
 
-The backend API listens on port **3030** to avoid conflicts with more common defaults such as 8080.
+The backend exposes REST endpoints on port **3030**. It relies on the OpenAI API for translation and text-to-speech synthesis.
 
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
-pip install -r requirements.txt
-python app.py
-```
+1. Export your OpenAI API key before starting the server:
 
-Once the server is running you can visit <http://localhost:3030/api/hello> to confirm it returns the greeting JSON payload.
+   ```bash
+   export OPENAI_API_KEY="sk-..."
+   ```
+
+2. Create and activate a virtual environment, install dependencies, and launch the API:
+
+   ```bash
+   cd backend
+   python -m venv .venv
+   source .venv/bin/activate  # Windows: .venv\Scripts\activate
+   pip install -r requirements.txt
+   python app.py
+   ```
+
+Available endpoints:
+
+| Method | Path                 | Description |
+| ------ | -------------------- | ----------- |
+| POST   | `/api/fetch-text`    | Fetches French text from a URL, prompt, or pasted text. |
+| POST   | `/api/generate-audio` | Splits confirmed text into sentences, translates to English, and returns base64 encoded French/English audio per sentence. |
+| GET    | `/api/health`        | Lightweight health probe. |
 
 ### Frontend (React + Vite)
 
-The frontend uses Vite's development server (default port 5173) and requests data from the Flask API.
+The Vite dev server (default port 5173) proxies requests to the Flask API.
 
-```bash
+```
 cd frontend
 npm install
 npm run dev
 ```
 
-After the dev server starts, open the URL printed in the console (by default <http://localhost:5173>) to see the React page display the greeting retrieved from the Flask backend running on port 3030.
+When the dev server starts, open the printed URL (usually <http://localhost:5173>). The UI lets you:
+
+- Pull French text from a URL, paste your own text, or ask ChatGPT to generate a passage.
+- Edit and confirm the text before synthesizing.
+- Generate per-sentence French audio, English translations, and English audio.
+- Play the lesson with sentence-level navigation, toggleable subtitles, and a “Study” mode that replays the current sentence FR → EN → FR.
 
 ## Project structure
 
@@ -48,5 +67,3 @@ frontend/
     styles.css
   vite.config.js
 ```
-
-Feel free to extend either side of the stack to build out the full language learning experience.
