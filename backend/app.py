@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 import requests
 from bs4 import BeautifulSoup
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, current_app
 from flask_cors import CORS
 from openai import OpenAI
 
@@ -31,6 +31,27 @@ def _extract_text_from_url(url: str) -> str:
     return text.strip()
 
 
+def extract_dict(text):
+    # Find the first { and last }
+    start = text.find('{')
+    end = text.rfind('}')
+    if start == -1 or end == -1 or start >= end:
+        raise ValueError("No valid dictionary found in text")
+
+    # Extract substring
+    dict_str = text[start:end+1]
+
+    # Optional: clean up trailing characters or invalid JSON symbols
+    dict_str = re.sub(r'(?s)^.*?({.*})$', r'\1', dict_str.strip())
+
+    # Parse into Python dict
+    try:
+        data = json.loads(dict_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Extracted text is not valid JSON: {e}")
+
+    return data
+
 def _extract_response_text(response) -> str:
     if hasattr(response, "output_text"):
         output_text = getattr(response, "output_text")
@@ -48,87 +69,62 @@ def _extract_response_text(response) -> str:
             if isinstance(item, dict) and "text" in item and isinstance(item["text"], str):
                 pieces.append(item["text"])
 
+
     return "\n".join(pieces).strip()
 
 
-def _split_into_sentences(text: str) -> List[str]:
-    cleaned = re.sub(r"\s+", " ", text).strip()
-    if not cleaned:
-        return []
-    # Simple sentence segmentation that keeps punctuation marks with sentences.
-    pattern = r"(?<=[.!?])\s+(?=[A-ZÀ-ÖØ-Ý0-9])"
-    sentences = re.split(pattern, cleaned)
-    sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
-    return sentences
-
-
-def _translate_sentences(client: OpenAI, sentences: List[str]) -> List[str]:
+def _split_and_translate_sentences(client: OpenAI, sentences: List[str]) -> List[str]:
     if not sentences:
         return []
 
+    schema = """
+    {
+        raw_text: sentences in french,
+        sentences: [
+            {"english": English translation of sentence 0, "french": French translation of sentence 0},
+            {"english": English translation of sentence 1, "french": French translation of sentence 1},
+            ...
+            {"english": English translation of sentence N, "french": French translation of sentence N}
+        ]
+    }
+    """
+
     prompt = {
-        "role": "user",
+        "role": "system",
         "content": (
-            "Translate each of the following French sentences into English. "
-            "Return a JSON object that contains a `translations` array. "
-            "Each entry must include the sentence `index` (starting at 0) and "
-            "the translated English sentence in the `english` field.\n\n"
+            f"Translate each of the following French sentences into English. "
+            f"Return a JSON object using the following format {schema}\n\n"
             f"Sentences: {json.dumps(sentences, ensure_ascii=False)}"
         ),
     }
 
-    schema: Dict[str, object] = {
-        "name": "sentence_translations",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "translations": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "index": {"type": "integer"},
-                            "english": {"type": "string"},
-                        },
-                        "required": ["index", "english"],
-                        "additionalProperties": False,
-                    },
-                }
-            },
-            "required": ["translations"],
-            "additionalProperties": False,
-        },
-    }
-
+    message_context = f"You translate French into English and respond using JSON only for a web application.\n Use the format {schema}"
+    current_app.logger.info("OpenAI system prompt: %s", message_context) 
+    current_app.logger.info("OpenAI prompt: %s", prompt) 
     response = client.responses.create(
         model="gpt-4o-mini",
         input=[
             {
                 "role": "system",
-                "content": "You translate French into English and respond using JSON only.",
+                "content": message_context,
             },
             prompt,
-        ],
-        response_format={"type": "json_schema", "json_schema": schema},
+        ]
     )
 
     content = _extract_response_text(response)
+    current_app.logger.info("OpenAI response: %s", content) 
+    content = extract_dict(content)
+    current_app.logger.info("OpenAI response post cleaning: %s", content) 
     if not content:
         raise RuntimeError("Unexpected response format from translation request")
 
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError as error:
-        raise RuntimeError("Unable to parse translation response as JSON") from error
-
-    items = parsed.get("translations", [])
-    translations: Dict[int, str] = {
-        int(item["index"]): item["english"].strip()
-        for item in items
-        if isinstance(item, dict) and "index" in item and "english" in item
-    }
-
-    return [translations.get(i, "") for i in range(len(sentences))]
+    if "sentences" in content:
+        items = content["sentences"]
+    else:
+        raise RuntimeError("Unable to extract items from JSON")
+    current_app.logger.info("items: %s", items) 
+    return items
 
 
 def _response_to_base64_audio(response_obj) -> str:
@@ -181,24 +177,27 @@ def _synthesize_audio(client: OpenAI, text: str) -> str:
         model="gpt-4o-mini-tts",
         voice="alloy",
         input=text,
-        format="mp3",
     )
     return _response_to_base64_audio(speech_response)
 
 
 def _build_segments(client: OpenAI, text: str) -> List[Dict[str, str]]:
-    sentences = _split_into_sentences(text)
-    translations = _translate_sentences(client, sentences)
+    sentence_pairs = _split_and_translate_sentences(client, text)
 
+    current_app.logger.info("build segments starting...")
     segments: List[Dict[str, str]] = []
-    for index, sentence in enumerate(sentences):
-        english = translations[index] if index < len(translations) else ""
-        french_audio = _synthesize_audio(client, sentence)
-        english_audio = _synthesize_audio(client, english or sentence)
+    for index, pair in enumerate(sentence_pairs):
+        french = (pair.get("french") or "").strip()
+        english = (pair.get("english") or "").strip()
+        if not french or not english:
+            current_app.logger.info("Skipping :", pair)
+            continue
+        french_audio = _synthesize_audio(client, french)
+        english_audio = _synthesize_audio(client, english)
         segments.append(
             {
                 "id": index,
-                "french": sentence,
+                "french": french,
                 "english": english,
                 "audio_fr": french_audio,
                 "audio_en": english_audio,
