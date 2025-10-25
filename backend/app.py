@@ -459,6 +459,7 @@ def generate_audio():
 def save_session():
     data = request.get_json(silent=True) or {}
     raw_text = (data.get("rawText") or data.get("raw_text") or "").strip()
+    title = (data.get("title") or data.get("name") or "").strip()
     segments = data.get("segments")
 
     if not raw_text or not isinstance(segments, list) or not segments:
@@ -517,7 +518,11 @@ def save_session():
             manifest_segment["key_vocab"] = key_vocab_entries
             manifest_segments.append(manifest_segment)
 
-        manifest = {"raw_text": raw_text, "segments": manifest_segments}
+        manifest = {
+            "title": title or f"Lesson {session_id}",
+            "raw_text": raw_text,
+            "segments": manifest_segments,
+        }
         manifest_path = os.path.join(session_dir, "manifest.json")
         with open(manifest_path, "w", encoding="utf-8") as manifest_file:
             json.dump(manifest, manifest_file, ensure_ascii=False, indent=2)
@@ -526,7 +531,7 @@ def save_session():
         shutil.rmtree(session_dir, ignore_errors=True)
         return jsonify({"error": f"Unable to save session: {error}"}), 500
 
-    return jsonify({"id": session_id})
+    return jsonify({"id": session_id, "title": manifest["title"]})
 
 
 @app.get("/api/sessions")
@@ -555,6 +560,7 @@ def list_sessions():
         sessions.append(
             {
                 "id": int(name),
+                "title": (manifest.get("title") or f"Lesson {name}").strip(),
                 "raw_text": raw_text,
                 "preview": preview[:160],
             }
@@ -608,7 +614,57 @@ def load_session(session_id: int):
                 }
             )
 
-    return jsonify({"raw_text": manifest.get("raw_text", ""), "segments": segments_response})
+    return jsonify(
+        {
+            "title": (manifest.get("title") or f"Lesson {session_id}").strip(),
+            "raw_text": manifest.get("raw_text", ""),
+            "segments": segments_response,
+        }
+    )
+
+
+@app.patch("/api/sessions/<int:session_id>")
+def update_session(session_id: int):
+    data = request.get_json(silent=True) or {}
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "Title is required."}), 400
+
+    sessions_dir = _ensure_sessions_dir()
+    session_dir = os.path.join(sessions_dir, str(session_id))
+    manifest_path = os.path.join(session_dir, "manifest.json")
+
+    if not os.path.isfile(manifest_path):
+        return jsonify({"error": "Session not found."}), 404
+
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+            manifest = json.load(manifest_file)
+        manifest["title"] = title
+        with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+            json.dump(manifest, manifest_file, ensure_ascii=False, indent=2)
+    except Exception as error:  # noqa: BLE001
+        current_app.logger.exception("Failed to update session title")
+        return jsonify({"error": f"Unable to update session: {error}"}), 500
+
+    return jsonify({"id": session_id, "title": title})
+
+
+@app.delete("/api/sessions/<int:session_id>")
+def delete_session(session_id: int):
+    sessions_dir = _ensure_sessions_dir()
+    session_dir = os.path.join(sessions_dir, str(session_id))
+
+    if not os.path.isdir(session_dir):
+        return jsonify({"error": "Session not found."}), 404
+
+    try:
+        shutil.rmtree(session_dir)
+    except Exception as error:  # noqa: BLE001
+        current_app.logger.exception("Failed to delete session directory")
+        return jsonify({"error": f"Unable to delete session: {error}"}), 500
+
+    return jsonify({"status": "deleted"})
 
 
 @app.get("/api/health")

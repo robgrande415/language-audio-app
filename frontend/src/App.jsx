@@ -62,6 +62,10 @@ function App() {
   const [savedSessions, setSavedSessions] = useState([])
   const [isLoadingSessions, setIsLoadingSessions] = useState(false)
   const [loadingSessionId, setLoadingSessionId] = useState(null)
+  const [editingSessionId, setEditingSessionId] = useState(null)
+  const [editingTitle, setEditingTitle] = useState('')
+  const [updatingSessionId, setUpdatingSessionId] = useState(null)
+  const [deletingSessionId, setDeletingSessionId] = useState(null)
 
   const audioRef = useRef(null)
   const previousObjectUrlsRef = useRef([])
@@ -144,6 +148,10 @@ function App() {
       }
       const sessions = Array.isArray(data.sessions) ? data.sessions : []
       setSavedSessions(sessions)
+      setEditingSessionId(null)
+      setEditingTitle('')
+      setUpdatingSessionId(null)
+      setDeletingSessionId(null)
     } catch (fetchError) {
       console.error(fetchError)
       setError(fetchError instanceof Error ? fetchError.message : 'Unable to retrieve saved sessions.')
@@ -588,6 +596,89 @@ function App() {
     [resetPlayback, revokePreviousUrls]
   )
 
+  const handleStartEditSession = useCallback((session) => {
+    if (!session) {
+      return
+    }
+    setError('')
+    setEditingSessionId(session.id)
+    setEditingTitle((session.title || `Lesson ${session.id}`).trim())
+  }, [])
+
+  const handleCancelEditSession = useCallback(() => {
+    setEditingSessionId(null)
+    setEditingTitle('')
+  }, [])
+
+  const handleSaveSessionTitle = useCallback(async () => {
+    if (editingSessionId == null) {
+      return
+    }
+    const trimmedTitle = editingTitle.trim()
+    if (!trimmedTitle) {
+      setError('Please provide a title before saving.')
+      return
+    }
+
+    setUpdatingSessionId(editingSessionId)
+    setError('')
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${editingSessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: trimmedTitle })
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data.error || 'Unable to update session.')
+      }
+      setSavedSessions((previous) =>
+        previous.map((session) => (session.id === editingSessionId ? { ...session, title: trimmedTitle } : session))
+      )
+      setEditingSessionId(null)
+      setEditingTitle('')
+    } catch (updateError) {
+      console.error(updateError)
+      setError(updateError instanceof Error ? updateError.message : 'Unable to update session.')
+    } finally {
+      setUpdatingSessionId(null)
+    }
+  }, [editingSessionId, editingTitle])
+
+  const handleDeleteSession = useCallback(
+    async (sessionId) => {
+      if (!sessionId) {
+        return
+      }
+      if (typeof window !== 'undefined' && !window.confirm('Delete this lesson? This cannot be undone.')) {
+        return
+      }
+
+      setDeletingSessionId(sessionId)
+      setError('')
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, {
+          method: 'DELETE'
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          throw new Error(data.error || 'Unable to delete session.')
+        }
+        setSavedSessions((previous) => previous.filter((session) => session.id !== sessionId))
+        if (editingSessionId === sessionId) {
+          setEditingSessionId(null)
+          setEditingTitle('')
+        }
+      } catch (deleteError) {
+        console.error(deleteError)
+        setError(deleteError instanceof Error ? deleteError.message : 'Unable to delete session.')
+      } finally {
+        setDeletingSessionId(null)
+      }
+    },
+    [editingSessionId]
+  )
+
   const generationStatusMessage = useMemo(() => {
     if (!isGeneratingAudio) {
       return ''
@@ -878,21 +969,72 @@ function App() {
                 {savedSessions.map((session) => {
                   const previewText = (session?.preview || session?.raw_text || '').trim()
                   const snippet = previewText.length > 160 ? `${previewText.slice(0, 157)}…` : previewText
+                  const isEditing = editingSessionId === session.id
+                  const isUpdating = updatingSessionId === session.id
+                  const isDeleting = deletingSessionId === session.id
+                  const loadDisabled = loadingSessionId === session.id || isUpdating || isDeleting
                   return (
                     <article className="load-card" key={session.id}>
                       <header>
-                        <h3>Lesson {session.id}</h3>
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={editingTitle}
+                            onChange={(event) => setEditingTitle(event.target.value)}
+                            className="load-card-title-input"
+                            placeholder="Session title"
+                            disabled={isUpdating}
+                          />
+                        ) : (
+                          <h3>{(session?.title || `Lesson ${session.id}`).trim()}</h3>
+                        )}
                       </header>
                       <p>{snippet || 'No preview available.'}</p>
                       <footer>
-                        <button
-                          type="button"
-                          className="primary"
-                          onClick={() => handleLoadSession(session.id)}
-                          disabled={loadingSessionId === session.id}
-                        >
-                          {loadingSessionId === session.id ? 'Loading…' : 'Load'}
-                        </button>
+                        {isEditing ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleCancelEditSession}
+                              disabled={isUpdating}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              className="primary"
+                              onClick={handleSaveSessionTitle}
+                              disabled={isUpdating || !editingTitle.trim()}
+                            >
+                              {isUpdating ? 'Saving…' : 'Save'}
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="primary"
+                              onClick={() => handleLoadSession(session.id)}
+                              disabled={loadDisabled}
+                            >
+                              {loadingSessionId === session.id ? 'Loading…' : 'Load'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditSession(session)}
+                              disabled={loadDisabled}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSession(session.id)}
+                              disabled={loadDisabled}
+                            >
+                              {isDeleting ? 'Deleting…' : 'Delete'}
+                            </button>
+                          </>
+                        )}
                       </footer>
                     </article>
                   )

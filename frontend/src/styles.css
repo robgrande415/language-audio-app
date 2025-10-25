@@ -135,10 +135,22 @@ header p {
   box-shadow: 0 20px 32px -28px rgba(15, 23, 42, 0.35);
 }
 
+.load-card header {
+  display: flex;
+  align-items: center;
+}
+
 .load-card header h3 {
   margin: 0;
   color: #1e293b;
   font-size: 1.05rem;
+}
+
+.load-card-title-input {
+  width: 100%;
+  font-size: 1.05rem;
+  font-weight: 600;
+  padding: 0.6rem 0.9rem;
 }
 
 .load-card p {
@@ -151,6 +163,8 @@ header p {
 .load-card footer {
   display: flex;
   justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .load-empty {
