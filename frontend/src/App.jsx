@@ -378,10 +378,19 @@ function App() {
       if (!hasSegments || index < 0 || index >= segments.length) {
         return
       }
+
+      if (index === currentSentenceIndex) {
+        if (isPlaying && audioRef.current) {
+          audioRef.current.pause()
+          setIsPlaying(false)
+          return
+        }
+      }
+
       resetPlayback()
       playSentence(index)
     },
-    [hasSegments, playSentence, resetPlayback, segments.length]
+    [currentSentenceIndex, hasSegments, isPlaying, playSentence, resetPlayback, segments.length]
   )
 
   const handleSourceChange = useCallback(
