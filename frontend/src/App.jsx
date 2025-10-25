@@ -82,6 +82,20 @@ function App() {
     [clearStudyDelayTimeout]
   )
 
+  const stopStudyMode = useCallback(() => {
+    const audio = audioRef.current
+    if (audio) {
+      audio.pause()
+      audio.onended = null
+      audio.onerror = null
+      audioRef.current = null
+    }
+    clearStudyDelayTimeout()
+    setIsPlaying(false)
+    setStudyState(createDefaultStudyState())
+    setResumeReady(Boolean(wasPlayingBeforeStudyRef.current))
+  }, [clearStudyDelayTimeout])
+
   const hasConfirmedText = useMemo(() => {
     if (sourceType === 'text') {
       return draftText.trim().length > 0
@@ -91,6 +105,8 @@ function App() {
   const hasSegments = segments.length > 0
   const currentSegment = hasSegments ? segments[currentSentenceIndex] : null
   const currentSegmentHasKeyVocab = Array.isArray(currentSegment?.keyVocab) && currentSegment.keyVocab.length > 0
+  const isSentenceStudyActive = studyState.active && studyState.mode === 'sentence'
+  const isKeyVocabStudyActive = studyState.active && studyState.mode === 'keyVocab'
 
   const resetPlayback = useCallback(() => {
     if (audioRef.current) {
@@ -222,13 +238,29 @@ function App() {
 
   const handleStudy = useCallback(() => {
     if (!hasSegments) return
+    if (studyState.active && studyState.mode === 'sentence') {
+      stopStudyMode()
+      return
+    }
     wasPlayingBeforeStudyRef.current = isPlaying
     resetPlayback()
     setStudyState({ ...createDefaultStudyState(), active: true, index: currentSentenceIndex, mode: 'sentence' })
-  }, [currentSentenceIndex, hasSegments, isPlaying, resetPlayback])
+  }, [
+    currentSentenceIndex,
+    hasSegments,
+    isPlaying,
+    resetPlayback,
+    stopStudyMode,
+    studyState.active,
+    studyState.mode
+  ])
 
   const handleStudyKeyVocab = useCallback(() => {
     if (!hasSegments || !currentSegmentHasKeyVocab) return
+    if (studyState.active && studyState.mode === 'keyVocab') {
+      stopStudyMode()
+      return
+    }
     wasPlayingBeforeStudyRef.current = isPlaying
     resetPlayback()
     setStudyState({
@@ -238,7 +270,16 @@ function App() {
       mode: 'keyVocab',
       vocabIndex: 0
     })
-  }, [currentSentenceIndex, currentSegmentHasKeyVocab, hasSegments, isPlaying, resetPlayback])
+  }, [
+    currentSentenceIndex,
+    currentSegmentHasKeyVocab,
+    hasSegments,
+    isPlaying,
+    resetPlayback,
+    stopStudyMode,
+    studyState.active,
+    studyState.mode
+  ])
 
   useEffect(() => {
     if (!studyState.active || studyState.index == null) {
@@ -729,16 +770,16 @@ function App() {
                 <button type="button" onClick={handleSkipForward} disabled={studyState.active}>
                   ⏭️ Next Sentence
                 </button>
-                <button type="button" className="secondary" onClick={handleStudy} disabled={studyState.active}>
-                  🎧 Study Sentence
+                <button type="button" className="secondary" onClick={handleStudy} disabled={isKeyVocabStudyActive}>
+                  {isSentenceStudyActive ? 'Pause Study Mode' : '🎧 Study Sentence'}
                 </button>
                 <button
                   type="button"
                   className="secondary"
                   onClick={handleStudyKeyVocab}
-                  disabled={studyState.active || !currentSegmentHasKeyVocab}
+                  disabled={isSentenceStudyActive || !currentSegmentHasKeyVocab}
                 >
-                  🗝️ Study Key Vocab
+                  {isKeyVocabStudyActive ? 'Pause Study Mode' : '🗝️ Study Key Vocab'}
                 </button>
                 {resumeReady && (
                   <button type="button" className="primary" onClick={handleResume}>
