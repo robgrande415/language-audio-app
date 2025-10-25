@@ -259,6 +259,57 @@ def fetch_text():
     return jsonify({"text": text})
 
 
+@app.post("/api/translate-sentences")
+def translate_sentences():
+    data = request.get_json(silent=True) or {}
+    text = data.get("text", "").strip()
+
+    if not text:
+        return jsonify({"error": "Text is required to translate."}), 400
+
+    try:
+        client = _get_openai_client()
+        sentence_pairs = _split_and_translate_sentences(client, text)
+    except RuntimeError as error:
+        return jsonify({"error": str(error)}), 500
+    except Exception as error:  # noqa: BLE001
+        return jsonify({"error": f"Unable to translate sentences: {error}"}), 500
+
+    prepared_pairs = []
+    for index, pair in enumerate(sentence_pairs):
+        french = (pair.get("french") or "").strip()
+        english = (pair.get("english") or "").strip()
+        if not french or not english:
+            continue
+        prepared_pairs.append({"id": index, "french": french, "english": english})
+
+    if not prepared_pairs:
+        return jsonify({"error": "No sentences were detected in the provided text."}), 422
+
+    return jsonify({"sentences": prepared_pairs})
+
+
+@app.post("/api/generate-segment-audio")
+def generate_segment_audio():
+    data = request.get_json(silent=True) or {}
+    french = (data.get("french") or "").strip()
+    english = (data.get("english") or "").strip()
+
+    if not french or not english:
+        return jsonify({"error": "Both French and English sentences are required."}), 400
+
+    try:
+        client = _get_openai_client()
+        french_audio = _synthesize_audio(client, french)
+        english_audio = _synthesize_audio(client, english)
+    except RuntimeError as error:
+        return jsonify({"error": str(error)}), 500
+    except Exception as error:  # noqa: BLE001
+        return jsonify({"error": f"Unable to synthesize audio: {error}"}), 500
+
+    return jsonify({"audio_fr": french_audio, "audio_en": english_audio})
+
+
 @app.post("/api/generate-audio")
 def generate_audio():
     data = request.get_json(silent=True) or {}
