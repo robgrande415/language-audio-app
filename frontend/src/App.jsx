@@ -10,6 +10,7 @@ const SOURCE_TYPES = [
 
 const SENTENCE_STUDY_SEQUENCE = ['audioFrUrl', 'audioEnUrl', 'audioFrUrl']
 const KEY_VOCAB_SEQUENCE = ['audioFrUrl', 'audioEnUrl', 'audioFrUrl']
+const STUDY_DELAY_MS = 250
 
 const createDefaultStudyState = () => ({
   active: false,
@@ -61,6 +62,25 @@ function App() {
   const audioRef = useRef(null)
   const previousObjectUrlsRef = useRef([])
   const wasPlayingBeforeStudyRef = useRef(false)
+  const studyDelayTimeoutRef = useRef(null)
+
+  const clearStudyDelayTimeout = useCallback(() => {
+    if (studyDelayTimeoutRef.current) {
+      clearTimeout(studyDelayTimeoutRef.current)
+      studyDelayTimeoutRef.current = null
+    }
+  }, [])
+
+  const scheduleStudyContinuation = useCallback(
+    (callback) => {
+      clearStudyDelayTimeout()
+      studyDelayTimeoutRef.current = setTimeout(() => {
+        studyDelayTimeoutRef.current = null
+        callback()
+      }, STUDY_DELAY_MS)
+    },
+    [clearStudyDelayTimeout]
+  )
 
   const hasConfirmedText = useMemo(() => {
     if (sourceType === 'text') {
@@ -78,10 +98,11 @@ function App() {
       audioRef.current.onended = null
       audioRef.current = null
     }
+    clearStudyDelayTimeout()
     setIsPlaying(false)
     setStudyState(createDefaultStudyState())
     setResumeReady(false)
-  }, [])
+  }, [clearStudyDelayTimeout])
 
   const revokePreviousUrls = useCallback(() => {
     previousObjectUrlsRef.current.forEach((url) => {
@@ -235,21 +256,23 @@ function App() {
       const url = segment[audioKey]
 
       attachAudio(url, 'study', () => {
-        let shouldMarkResume = false
-        setStudyState((previous) => {
-          if (previous.mode !== 'sentence') {
-            return previous
+        scheduleStudyContinuation(() => {
+          let shouldMarkResume = false
+          setStudyState((previous) => {
+            if (previous.mode !== 'sentence') {
+              return previous
+            }
+            const nextStep = previous.step + 1
+            if (nextStep < SENTENCE_STUDY_SEQUENCE.length) {
+              return { ...previous, step: nextStep }
+            }
+            shouldMarkResume = true
+            return createDefaultStudyState()
+          })
+          if (shouldMarkResume) {
+            setResumeReady(true)
           }
-          const nextStep = previous.step + 1
-          if (nextStep < SENTENCE_STUDY_SEQUENCE.length) {
-            return { ...previous, step: nextStep }
-          }
-          shouldMarkResume = true
-          return createDefaultStudyState()
         })
-        if (shouldMarkResume) {
-          setResumeReady(true)
-        }
       })
       return
     }
@@ -263,9 +286,13 @@ function App() {
       }
 
       if (studyState.vocabIndex >= vocabList.length) {
-        attachAudio(segment.audioFrUrl, 'study', () => {
-          setResumeReady(true)
-          setStudyState(createDefaultStudyState())
+        scheduleStudyContinuation(() => {
+          attachAudio(segment.audioFrUrl, 'study', () => {
+            scheduleStudyContinuation(() => {
+              setResumeReady(true)
+              setStudyState(createDefaultStudyState())
+            })
+          })
         })
         return
       }
@@ -275,25 +302,27 @@ function App() {
       const url = vocab?.[audioKey]
 
       attachAudio(url, 'study', () => {
-        setStudyState((previous) => {
-          if (previous.mode !== 'keyVocab') {
-            return previous
-          }
-          let nextStep = previous.step + 1
-          let nextVocabIndex = previous.vocabIndex
-          if (nextStep >= KEY_VOCAB_SEQUENCE.length) {
-            nextStep = 0
-            nextVocabIndex += 1
-          }
-          return {
-            ...previous,
-            step: nextStep,
-            vocabIndex: nextVocabIndex
-          }
+        scheduleStudyContinuation(() => {
+          setStudyState((previous) => {
+            if (previous.mode !== 'keyVocab') {
+              return previous
+            }
+            let nextStep = previous.step + 1
+            let nextVocabIndex = previous.vocabIndex
+            if (nextStep >= KEY_VOCAB_SEQUENCE.length) {
+              nextStep = 0
+              nextVocabIndex += 1
+            }
+            return {
+              ...previous,
+              step: nextStep,
+              vocabIndex: nextVocabIndex
+            }
+          })
         })
       })
     }
-  }, [attachAudio, segments, studyState])
+  }, [attachAudio, scheduleStudyContinuation, segments, studyState])
 
   const handleResume = useCallback(() => {
     setResumeReady(false)
