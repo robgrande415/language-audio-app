@@ -34,6 +34,8 @@ function App() {
   const [promptInput, setPromptInput] = useState('')
   const [isFetchingText, setIsFetchingText] = useState(false)
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false)
+  const [generationStage, setGenerationStage] = useState(null)
+  const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0 })
   const [draftText, setDraftText] = useState('')
   const [confirmedText, setConfirmedText] = useState('')
   const [segments, setSegments] = useState([])
@@ -281,6 +283,26 @@ function App() {
     setError('')
   }, [draftText, resetPlayback, revokePreviousUrls, segments.length])
 
+  const generationStatusMessage = useMemo(() => {
+    if (!isGeneratingAudio) {
+      return ''
+    }
+
+    if (generationStage === 'translating') {
+      return 'Translating sentences'
+    }
+
+    if (generationStage === 'generating') {
+      const { current, total } = generationProgress
+      if (total > 0) {
+        const displayed = Math.min(current + 1, total)
+        return `Generating audio: ${displayed}/${total} sentences done`
+      }
+    }
+
+    return 'Generating audio…'
+  }, [generationProgress, generationStage, isGeneratingAudio])
+
   const handleGenerateAudio = useCallback(async () => {
     const textToUse = confirmedText.trim()
     if (!textToUse) {
@@ -289,38 +311,69 @@ function App() {
     }
 
     setIsGeneratingAudio(true)
+    setGenerationStage('translating')
+    setGenerationProgress({ current: 0, total: 0 })
     setError('')
     resetPlayback()
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/generate-audio`, {
+      const translationResponse = await fetch(`${API_BASE_URL}/api/translate-sentences`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: textToUse })
       })
-      const data = await response.json()
-      if (!response.ok) {
-        throw new Error(data.error || 'Audio generation failed')
+      const translationData = await translationResponse.json()
+      if (!translationResponse.ok) {
+        throw new Error(translationData.error || 'Unable to translate sentences')
       }
 
-      revokePreviousUrls()
-      const rawSegments = Array.isArray(data.segments) ? data.segments : []
-      const preparedSegments = rawSegments.map((segment) => {
-        const audioFrUrl = createAudioUrlFromBase64(segment.audio_fr)
-        const audioEnUrl = createAudioUrlFromBase64(segment.audio_en)
-        previousObjectUrlsRef.current.push(audioFrUrl, audioEnUrl)
-        return {
-          ...segment,
-          audioFrUrl,
-          audioEnUrl
-        }
-      })
+      const translatedPairs = Array.isArray(translationData.sentences) ? translationData.sentences : []
+      const sanitizedPairs = translatedPairs
+        .map((pair, index) => ({
+          id: pair?.id ?? index,
+          french: (pair?.french || '').trim(),
+          english: (pair?.english || '').trim()
+        }))
+        .filter((pair) => pair.french && pair.english)
 
-      if (!preparedSegments.length) {
+      revokePreviousUrls()
+      if (!sanitizedPairs.length) {
         setSegments([])
         setCurrentSentenceIndex(0)
         setError('No sentences were detected in the provided text.')
         return
+      }
+
+      const preparedSegments = []
+      setGenerationStage('generating')
+      setGenerationProgress({ current: 0, total: sanitizedPairs.length })
+
+      for (let index = 0; index < sanitizedPairs.length; index += 1) {
+        setGenerationProgress({ current: index, total: sanitizedPairs.length })
+        const pair = sanitizedPairs[index]
+        const audioResponse = await fetch(`${API_BASE_URL}/api/generate-segment-audio`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ french: pair.french, english: pair.english })
+        })
+
+        const audioData = await audioResponse.json()
+        if (!audioResponse.ok) {
+          throw new Error(audioData.error || 'Audio generation failed')
+        }
+
+        const audioFrUrl = createAudioUrlFromBase64(audioData.audio_fr)
+        const audioEnUrl = createAudioUrlFromBase64(audioData.audio_en)
+        previousObjectUrlsRef.current.push(audioFrUrl, audioEnUrl)
+        preparedSegments.push({
+          id: pair.id,
+          french: pair.french,
+          english: pair.english,
+          audio_fr: audioData.audio_fr,
+          audio_en: audioData.audio_en,
+          audioFrUrl,
+          audioEnUrl
+        })
       }
 
       setSegments(preparedSegments)
@@ -328,8 +381,13 @@ function App() {
     } catch (generationError) {
       console.error(generationError)
       setError(generationError.message)
+      revokePreviousUrls()
+      setSegments([])
+      setCurrentSentenceIndex(0)
     } finally {
       setIsGeneratingAudio(false)
+      setGenerationStage(null)
+      setGenerationProgress({ current: 0, total: 0 })
     }
   }, [confirmedText, resetPlayback, revokePreviousUrls])
 
@@ -423,7 +481,7 @@ function App() {
       <section className="panel">
         <h2>3. Generate audio</h2>
         <button type="button" className="primary" onClick={handleGenerateAudio} disabled={!hasConfirmedText || isGeneratingAudio}>
-          {isGeneratingAudio ? 'Generating audio…' : 'Generate Audio'}
+          {isGeneratingAudio ? generationStatusMessage : 'Generate Audio'}
         </button>
       </section>
 
