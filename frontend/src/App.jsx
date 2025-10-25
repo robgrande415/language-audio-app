@@ -373,6 +373,17 @@ function App() {
     }
   }, [currentSentenceIndex, playSentence])
 
+  const handleSelectSentence = useCallback(
+    (index) => {
+      if (!hasSegments || index < 0 || index >= segments.length) {
+        return
+      }
+      resetPlayback()
+      playSentence(index)
+    },
+    [hasSegments, playSentence, resetPlayback, segments.length]
+  )
+
   const handleSourceChange = useCallback(
     (event) => {
       const newType = event.target.value
@@ -804,7 +815,19 @@ function App() {
                 {segments.map((segment, index) => {
                   const isActive = index === currentSentenceIndex && !studyState.active
                   return (
-                    <li key={segment.id} className={isActive ? 'active' : ''}>
+                    <li
+                      key={segment.id}
+                      className={isActive ? 'active' : ''}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => handleSelectSentence(index)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          handleSelectSentence(index)
+                        }
+                      }}
+                    >
                       <div className="sentence-header">
                         <span>Sentence {index + 1}</span>
                         <div className="tags">
