@@ -39,9 +39,9 @@ backend/
   app.py
   requirements.txt
 frontend/
+  index.html
   package.json
   public/
-    index.html
   src/
     App.jsx
     main.jsx
