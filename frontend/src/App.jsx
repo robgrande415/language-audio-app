@@ -58,6 +58,7 @@ function App() {
   const [showKeyVocab, setShowKeyVocab] = useState(false)
   const [studyState, setStudyState] = useState(createDefaultStudyState)
   const [resumeReady, setResumeReady] = useState(false)
+  const [expandedSentenceIds, setExpandedSentenceIds] = useState(() => new Set())
   const [viewMode, setViewMode] = useState('setup')
   const [savedSessions, setSavedSessions] = useState([])
   const [isLoadingSessions, setIsLoadingSessions] = useState(false)
@@ -319,6 +320,18 @@ function App() {
     studyState.mode
   ])
 
+  const toggleSentenceExpanded = useCallback((segmentId) => {
+    setExpandedSentenceIds((previous) => {
+      const next = new Set(previous)
+      if (next.has(segmentId)) {
+        next.delete(segmentId)
+      } else {
+        next.add(segmentId)
+      }
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     if (!studyState.active || studyState.index == null) {
       return
@@ -448,6 +461,10 @@ function App() {
     },
     [currentSentenceIndex, hasSegments, isPlaying, playSentence, resetPlayback, segments.length]
   )
+
+  useEffect(() => {
+    setExpandedSentenceIds(new Set())
+  }, [segments])
 
   const handleSourceChange = useCallback(
     (event) => {
@@ -1198,30 +1215,39 @@ function App() {
               <ol className="transcript">
                 {segments.map((segment, index) => {
                   const isActive = index === currentSentenceIndex && !studyState.active
+                  const isCurrentlyPlaying = index === currentSentenceIndex && isPlaying
+                  const isExpanded = expandedSentenceIds.has(segment.id)
                   return (
                     <li
                       key={segment.id}
                       className={isActive ? 'active' : ''}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => handleSelectSentence(index)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          handleSelectSentence(index)
-                        }
-                      }}
                     >
                       <div className="sentence-header">
                         <span>Sentence {index + 1}</span>
-                        <div className="tags">
-                          <span className="tag">FR audio</span>
-                          <span className="tag">EN audio</span>
+                        <div className="sentence-actions">
+                          <button
+                            type="button"
+                            className="sentence-play"
+                            onClick={() => handleSelectSentence(index)}
+                            disabled={studyState.active}
+                          >
+                            {isCurrentlyPlaying ? 'Pause' : 'Play'}
+                          </button>
+                          <button
+                            type="button"
+                            className="expand-toggle"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              toggleSentenceExpanded(segment.id)
+                            }}
+                          >
+                            {isExpanded ? 'Collapse' : 'Expand'}
+                          </button>
                         </div>
                       </div>
-                      {showFrench && <p className="french">{segment.french}</p>}
-                      {showEnglish && <p className="english">{segment.english}</p>}
-                      {showKeyVocab && segment.keyVocab?.length > 0 && (
+                      {(showFrench || isExpanded) && <p className="french">{segment.french}</p>}
+                      {(showEnglish || isExpanded) && <p className="english">{segment.english}</p>}
+                      {((showKeyVocab || isExpanded) && segment.keyVocab?.length > 0) && (
                         <ul className="key-vocab-list">
                           {segment.keyVocab.map((item, vocabIndex) => (
                             <li key={item?.id ?? `${segment.id}-kv-${vocabIndex}`} className="key-vocab-item">
