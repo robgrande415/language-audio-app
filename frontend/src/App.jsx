@@ -358,20 +358,38 @@ function App() {
 
     if (studyState.mode === 'keyVocab') {
       const vocabList = Array.isArray(segment.keyVocab) ? segment.keyVocab : []
-      if (!vocabList.length) {
-        setResumeReady(true)
-        setStudyState(createDefaultStudyState())
-        return
+      const nextSentenceIndex = studyState.index + 1
+      const hasNextSentence = nextSentenceIndex < segments.length
+
+      const startNextSentence = () => {
+        if (!hasNextSentence) {
+          setResumeReady(true)
+          setStudyState(createDefaultStudyState())
+          return
+        }
+        setResumeReady(false)
+        setCurrentSentenceIndex(nextSentenceIndex)
+        setStudyState(() => {
+          const nextState = createDefaultStudyState()
+          nextState.active = true
+          nextState.index = nextSentenceIndex
+          nextState.mode = 'keyVocab'
+          nextState.vocabIndex = 0
+          return nextState
+        })
       }
 
-      if (studyState.vocabIndex >= vocabList.length) {
+      if (!vocabList.length || studyState.vocabIndex >= vocabList.length) {
         scheduleStudyContinuation(() => {
-          attachAudio(segment.audioFrUrl, 'study', () => {
-            scheduleStudyContinuation(() => {
-              setResumeReady(true)
-              setStudyState(createDefaultStudyState())
+          if (segment.audioFrUrl) {
+            attachAudio(segment.audioFrUrl, 'study', () => {
+              scheduleStudyContinuation(() => {
+                startNextSentence()
+              })
             })
-          })
+            return
+          }
+          startNextSentence()
         })
         return
       }
