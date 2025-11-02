@@ -349,19 +349,58 @@ button:not(:disabled):hover {
   color: #1e293b;
 }
 
-.tags {
+.sentence-actions {
   display: flex;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 0.75rem;
 }
 
-.tag {
+.sentence-actions button {
+  min-width: 4.5rem;
+}
+
+.sentence-play {
+  border: 1px solid #cbd5f5;
+  background: #1d4ed8;
+  color: #fff;
   font-size: 0.75rem;
-  padding: 0.25rem 0.5rem;
+  padding: 0.4rem 0.9rem;
   border-radius: 999px;
-  background: #e2e8f0;
-  color: #475569;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.sentence-play:disabled {
+  cursor: not-allowed;
+  background: #94a3b8;
+  border-color: #cbd5e1;
+}
+
+.sentence-play:not(:disabled):hover,
+.sentence-play:not(:disabled):focus {
+  background: #1e40af;
+  border-color: #1e3a8a;
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.expand-toggle {
+  border: 1px solid #cbd5f5;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 0.75rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+.expand-toggle:hover,
+.expand-toggle:focus {
+  background: #dbeafe;
+  border-color: #93c5fd;
+  color: #1e3a8a;
+  outline: none;
 }
 
 .french {
