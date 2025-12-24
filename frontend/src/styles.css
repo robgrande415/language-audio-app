@@ -359,6 +359,91 @@ button:not(:disabled):hover {
   min-width: 4.5rem;
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 1000;
+}
+
+.modal-content {
+  width: min(420px, 100%);
+  background: #ffffff;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 35px 60px -30px rgba(15, 23, 42, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.modal-content h3 {
+  margin: 0;
+  color: #0f172a;
+}
+
+.modal-subtitle {
+  margin: 0;
+  color: #475569;
+}
+
+.download-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.download-option {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.download-option.selected {
+  border-color: #2563eb;
+  background: #eef2ff;
+  box-shadow: 0 15px 30px -28px rgba(37, 99, 235, 0.6);
+}
+
+.download-option input {
+  display: none;
+}
+
+.download-option-label {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.download-option-description {
+  font-size: 0.92rem;
+  color: #475569;
+}
+
+.modal-error {
+  margin: 0;
+  color: #b91c1c;
+  background: #fee2e2;
+  padding: 0.65rem 0.9rem;
+  border-radius: 0.65rem;
+  border: 1px solid #fecaca;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
 .sentence-play {
   border: 1px solid #cbd5f5;
   background: #1d4ed8;

@@ -16,6 +16,11 @@ app = Flask(__name__)
 CORS(app)
 
 SESSIONS_DIR = os.path.join(os.path.dirname(__file__), "sessions")
+DOWNLOAD_VARIANTS = {
+    "french-only",
+    "french-english",
+    "french-key-vocab",
+}
 
 
 def _get_openai_client() -> OpenAI:
@@ -247,6 +252,34 @@ def _read_audio_file_as_base64(session_dir: str, filename: Optional[str]) -> Opt
         return base64.b64encode(audio_file.read()).decode("utf-8")
 
 
+def _decode_audio_bytes(audio_value: Optional[str]) -> Optional[bytes]:
+    if not audio_value:
+        return None
+    try:
+        return base64.b64decode(audio_value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _collect_key_vocab(segment: Dict[str, object]) -> List[Dict[str, object]]:
+    raw_key_vocab = segment.get("key_vocab")
+    if isinstance(raw_key_vocab, list):
+        return raw_key_vocab
+    camel_case_vocab = segment.get("keyVocab")
+    if isinstance(camel_case_vocab, list):
+        return camel_case_vocab
+    return []
+
+
+def _get_audio_value(item: Dict[str, object], snake_key: str) -> Optional[str]:
+    value = item.get(snake_key)
+    if value:
+        return value
+    parts = snake_key.split("_")
+    camel_key = parts[0] + "".join(word.capitalize() for word in parts[1:])
+    return item.get(camel_key)
+
+
 def _build_segments(client: OpenAI, text: str) -> List[Dict[str, str]]:
     sentence_pairs = _split_and_translate_sentences(client, text)
 
@@ -453,6 +486,62 @@ def generate_audio():
         return jsonify({"error": f"Unable to generate audio: {error}"}), 500
 
     return jsonify({"segments": segments})
+
+
+@app.post("/api/download-lesson")
+def download_lesson_audio():
+    data = request.get_json(silent=True) or {}
+    variant = (data.get("variant") or "").strip().lower()
+    if variant not in DOWNLOAD_VARIANTS:
+        return jsonify({"error": "Unsupported download option."}), 400
+
+    segments_payload = data.get("segments")
+    if not isinstance(segments_payload, list) or not segments_payload:
+        return jsonify({"error": "Segments are required to build the download."}), 400
+
+    combined_audio = bytearray()
+
+    for segment in segments_payload:
+        if not isinstance(segment, dict):
+            continue
+        audio_fr = _decode_audio_bytes(_get_audio_value(segment, "audio_fr"))
+        audio_en = _decode_audio_bytes(_get_audio_value(segment, "audio_en"))
+
+        if variant == "french-only":
+            if audio_fr:
+                combined_audio.extend(audio_fr)
+            continue
+
+        if variant == "french-english":
+            if audio_fr:
+                combined_audio.extend(audio_fr)
+            if audio_en:
+                combined_audio.extend(audio_en)
+            if audio_fr:
+                combined_audio.extend(audio_fr)
+            continue
+
+        if variant == "french-key-vocab":
+            if audio_fr:
+                combined_audio.extend(audio_fr)
+            key_vocab_entries = _collect_key_vocab(segment)
+            for vocab in key_vocab_entries:
+                if not isinstance(vocab, dict):
+                    continue
+                vocab_fr = _decode_audio_bytes(_get_audio_value(vocab, "audio_fr"))
+                vocab_en = _decode_audio_bytes(_get_audio_value(vocab, "audio_en"))
+                if vocab_fr:
+                    combined_audio.extend(vocab_fr)
+                if vocab_en:
+                    combined_audio.extend(vocab_en)
+            if audio_fr:
+                combined_audio.extend(audio_fr)
+
+    if not combined_audio:
+        return jsonify({"error": "Unable to assemble audio with the provided data."}), 422
+
+    audio_base64 = base64.b64encode(bytes(combined_audio)).decode("utf-8")
+    return jsonify({"audio_base64": audio_base64, "variant": variant})
 
 
 @app.post("/api/save-session")

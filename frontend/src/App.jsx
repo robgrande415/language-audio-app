@@ -12,6 +12,23 @@ const SOURCE_TYPES = [
 const SENTENCE_STUDY_SEQUENCE = ['audioFrUrl', 'audioEnUrl', 'audioFrUrl']
 const KEY_VOCAB_SEQUENCE = ['audioFrUrl', 'audioEnUrl', 'audioFrUrl']
 const STUDY_DELAY_MS = 250
+const DOWNLOAD_OPTIONS = [
+  {
+    id: 'french-only',
+    label: 'French only',
+    description: 'All sentences in French back-to-back'
+  },
+  {
+    id: 'french-english',
+    label: 'French + English',
+    description: 'French, English, French for each sentence'
+  },
+  {
+    id: 'french-key-vocab',
+    label: 'French + Key vocab',
+    description: 'French sentence, vocab (FR+EN), then the sentence again'
+  }
+]
 
 const createDefaultStudyState = () => ({
   active: false,
@@ -67,6 +84,10 @@ function App() {
   const [editingTitle, setEditingTitle] = useState('')
   const [updatingSessionId, setUpdatingSessionId] = useState(null)
   const [deletingSessionId, setDeletingSessionId] = useState(null)
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false)
+  const [selectedDownloadVariant, setSelectedDownloadVariant] = useState(DOWNLOAD_OPTIONS[0].id)
+  const [isPreparingDownload, setIsPreparingDownload] = useState(false)
+  const [downloadError, setDownloadError] = useState('')
 
   const audioRef = useRef(null)
   const previousObjectUrlsRef = useRef([])
@@ -174,6 +195,89 @@ function App() {
       fetchSavedSessions()
     }
   }, [fetchSavedSessions, sourceType])
+
+  const handleOpenDownloadModal = useCallback(() => {
+    if (!segments.length) {
+      return
+    }
+    setDownloadError('')
+    setIsDownloadModalOpen(true)
+  }, [segments.length])
+
+  const handleCloseDownloadModal = useCallback(() => {
+    if (isPreparingDownload) {
+      return
+    }
+    setIsDownloadModalOpen(false)
+    setDownloadError('')
+  }, [isPreparingDownload])
+
+  const handleDownloadLesson = useCallback(async () => {
+    if (!segments.length) {
+      setDownloadError('No lesson audio is available yet.')
+      return
+    }
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      setDownloadError('Downloads are only available in the browser.')
+      return
+    }
+
+    setIsPreparingDownload(true)
+    setDownloadError('')
+
+    const payloadSegments = segments.map((segment) => ({
+      id: segment?.id,
+      audio_fr: segment?.audio_fr || null,
+      audio_en: segment?.audio_en || null,
+      key_vocab: Array.isArray(segment?.keyVocab)
+        ? segment.keyVocab.map((item) => ({
+            id: item?.id,
+            audio_fr: item?.audio_fr || null,
+            audio_en: item?.audio_en || null
+          }))
+        : []
+    }))
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/download-lesson`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          variant: selectedDownloadVariant,
+          segments: payloadSegments
+        })
+      })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(data.error || 'Unable to prepare download.')
+      }
+      const audioBase64 = data.audio_base64 || data.audioBase64
+      if (!audioBase64) {
+        throw new Error('Audio track missing from download response.')
+      }
+      const downloadUrl = createAudioUrlFromBase64(audioBase64)
+      if (!downloadUrl) {
+        throw new Error('Unable to prepare MP3 download.')
+      }
+
+      const tempLink = document.createElement('a')
+      tempLink.href = downloadUrl
+      tempLink.download = `lesson-${selectedDownloadVariant}.mp3`
+      document.body.appendChild(tempLink)
+      tempLink.click()
+      document.body.removeChild(tempLink)
+      setTimeout(() => {
+        URL.revokeObjectURL(downloadUrl)
+      }, 4000)
+
+      setIsDownloadModalOpen(false)
+    } catch (downloadError) {
+      console.error(downloadError)
+      setDownloadError(downloadError instanceof Error ? downloadError.message : 'Unable to build download.')
+    } finally {
+      setIsPreparingDownload(false)
+    }
+  }, [segments, selectedDownloadVariant])
 
   const attachAudio = useCallback((url, mode, onEnded) => {
     if (!url) {
@@ -1197,6 +1301,14 @@ function App() {
                   >
                     {isKeyVocabStudyActive ? 'Pause Study Mode' : '🗝️ Study Key Vocab'}
                   </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={handleOpenDownloadModal}
+                    disabled={!segments.length}
+                  >
+                    ⬇️ Download MP3
+                  </button>
                 </div>
               </div>
 
@@ -1264,6 +1376,42 @@ function App() {
             </section>
           )}
         </>
+      )}
+      {isDownloadModalOpen && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="download-modal-title">
+          <div className="modal-content">
+            <h3 id="download-modal-title">Download lesson audio</h3>
+            <p className="modal-subtitle">Pick the study mix you'd like to bundle into one MP3.</p>
+            <div className="download-options">
+              {DOWNLOAD_OPTIONS.map((option) => (
+                <label
+                  key={option.id}
+                  className={`download-option ${selectedDownloadVariant === option.id ? 'selected' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="download-variant"
+                    value={option.id}
+                    checked={selectedDownloadVariant === option.id}
+                    onChange={() => setSelectedDownloadVariant(option.id)}
+                    disabled={isPreparingDownload}
+                  />
+                  <span className="download-option-label">{option.label}</span>
+                  <span className="download-option-description">{option.description}</span>
+                </label>
+              ))}
+            </div>
+            {downloadError && <p className="modal-error">{downloadError}</p>}
+            <div className="modal-actions">
+              <button type="button" onClick={handleCloseDownloadModal} disabled={isPreparingDownload}>
+                Cancel
+              </button>
+              <button type="button" className="primary" onClick={handleDownloadLesson} disabled={isPreparingDownload}>
+                {isPreparingDownload ? 'Preparing…' : 'Download MP3'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   )
