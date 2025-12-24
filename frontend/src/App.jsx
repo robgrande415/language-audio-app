@@ -27,6 +27,11 @@ const DOWNLOAD_OPTIONS = [
     id: 'french-key-vocab',
     label: 'French + Key vocab',
     description: 'French sentence, vocab (FR+EN), then the sentence again'
+  },
+  {
+    id: 'french-english-key-vocab',
+    label: 'French + English + Vocab',
+    description: 'French, English, vocab (FR+EN), then French again'
   }
 ]
 

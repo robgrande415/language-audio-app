@@ -20,6 +20,7 @@ DOWNLOAD_VARIANTS = {
     "french-only",
     "french-english",
     "french-key-vocab",
+    "french-english-key-vocab",
 }
 
 
@@ -534,6 +535,29 @@ def download_lesson_audio():
                     combined_audio.extend(vocab_fr)
                 if vocab_en:
                     combined_audio.extend(vocab_en)
+                if vocab_fr:
+                    combined_audio.extend(vocab_fr)
+            if audio_fr:
+                combined_audio.extend(audio_fr)
+            continue
+
+        if variant == "french-english-key-vocab":
+            if audio_fr:
+                combined_audio.extend(audio_fr)
+            if audio_en:
+                combined_audio.extend(audio_en)
+            key_vocab_entries = _collect_key_vocab(segment)
+            for vocab in key_vocab_entries:
+                if not isinstance(vocab, dict):
+                    continue
+                vocab_fr = _decode_audio_bytes(_get_audio_value(vocab, "audio_fr"))
+                vocab_en = _decode_audio_bytes(_get_audio_value(vocab, "audio_en"))
+                if vocab_fr:
+                    combined_audio.extend(vocab_fr)
+                if vocab_en:
+                    combined_audio.extend(vocab_en)
+                if vocab_fr:
+                    combined_audio.extend(vocab_fr)
             if audio_fr:
                 combined_audio.extend(audio_fr)
 
